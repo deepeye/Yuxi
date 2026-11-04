@@ -23,7 +23,7 @@ RUN npm config set registry https://registry.npmmirror.com --global \
 RUN set -ex \
     # (A) 设置时区
     && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
-    # (B) 替换阿里云镜像源 (针对 Debian Bookworm 的新版格式)
+    # (B) 替换清华源 (针对 Debian Bookworm 的新版格式)
     && sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
     && sed -i 's|security.debian.org/debian-security|mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list.d/debian.sources \
     # (C) 安装必要的系统库
@@ -45,25 +45,30 @@ RUN set -ex \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制项目配置文件
-COPY backend/pyproject.toml /app/pyproject.toml
-COPY backend/.python-version /app/.python-version
-COPY backend/uv.lock /app/uv.lock
+COPY --chown=0:0 --chmod=0644 backend/pyproject.toml /app/pyproject.toml
+COPY --chown=0:0 --chmod=0644 backend/.python-version /app/.python-version
+COPY --chown=0:0 --chmod=0644 backend/uv.lock /app/uv.lock
 
-# 先复制 package 目录，因为 pyproject.toml 中 yuxi = { path = "package", editable = true }
-COPY backend/package /app/package
+# 安装唯一的后端 Python 项目。
+COPY --chown=0:0 --chmod=0644 backend/README.md /app/README.md
+COPY --chown=0:0 --chmod=0644 backend/MANIFEST.in /app/MANIFEST.in
+COPY --chown=0:0 backend/yuxi /app/yuxi
+# 构建输入可来自 600/700 checkout，镜像内源码只读权限不依赖宿主模式。
+RUN find /app/yuxi -type d -exec chmod 0755 {} + \
+    && find /app/yuxi -type f -exec chmod 0644 {} +
 
-# 如果网络还是不好，可以在后面添加 --index-url https://mirrors.aliyun.com/pypi/simple/
+# 依赖版本与发行文件下载地址由锁文件固定。
 RUN uv sync --no-cache --group test --no-dev --frozen
 
-# 复制 server 代码
-COPY backend/server /app/server
-COPY docker/api-entrypoint.sh /usr/local/bin/yuxi-entrypoint
+COPY --chown=0:0 --chmod=0755 docker/api-entrypoint.sh /usr/local/bin/yuxi-entrypoint
 
+# RapidOCR 使用 rapidocr wheel 自带的 PP-OCRv6 模型；不预置时首次解析会联网到
+# modelscope.cn 下载且离线部署不可行，因此构建期预置到 RAPIDOCR_MODEL_DIR 指向目录。
 RUN groupadd --gid 1000 yuxi \
     && useradd --uid 1000 --gid 1000 --create-home yuxi \
     && mkdir -p /app/runtime /home/yuxi/.cache/rapidocr/models \
-    && chown -R 1000:1000 /app/runtime /home/yuxi \
-    && chmod 0755 /usr/local/bin/yuxi-entrypoint
+    && cp "$(python -c 'import os, sysconfig; print(os.path.join(sysconfig.get_paths()["purelib"], "rapidocr", "models"))')"/*.onnx /home/yuxi/.cache/rapidocr/models/ \
+    && chown -R 1000:1000 /app/runtime /home/yuxi
 
 ENV HOME=/home/yuxi \
     RAPIDOCR_MODEL_DIR=/home/yuxi/.cache/rapidocr/models

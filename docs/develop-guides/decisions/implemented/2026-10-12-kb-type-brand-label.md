@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：feature
-Owner：web/src/utils/kb_utils.js
+Owner：frontend/src/modules/knowledge/model/kb_utils.js
 
 ## 问题
 
@@ -10,13 +10,13 @@ Owner：web/src/utils/kb_utils.js
 
 ## 决策
 
-`web/src/utils/kb_utils.js` 的 `getKbTypeLabel` 将 `milvus` 映射为 `Smartfox`。该函数是 `milvus` 类型展示名的唯一前端 Owner，弹出层（`DatabaseCreateFlowModal.vue`）、列表页（`DataBaseView.vue`）、图谱区（`KnowledgeGraphSection.vue`）共用同一映射，全部展示面一致变化，不出现混品牌。
+`frontend/src/modules/knowledge/model/kb_utils.js` 的 `getKbTypeLabel` 将 `milvus` 映射为 `Smartfox`。该函数是 `milvus` 类型展示名的唯一前端 Owner，新建流程（`KnowledgeBaseCreateFlowModal.vue`）、列表（`KnowledgeCatalog.vue`）、图谱区（`KnowledgeGraphSection.vue`）共用同一映射，全部展示面一致变化，不出现混品牌。品牌名本身统一为 `睿狐`，见 `2026-10-11-web-display-brand.md`；`Smartfox` 只作为该类型的展示名。
 
-后端 `backend/package/yuxi/knowledge/implementations/milvus.py` 的类属性 `name = "Milvus"` 保持不变：它是 `get_available_types()` 经 API 返回的技术语义名称，仅在前端映射缺失时作为回退。展示品牌与后端技术身份分离，避免数据层携带营销品牌。
+后端 `backend/yuxi/modules/knowledge/implementations/milvus.py` 的类属性 `name = "Milvus"` 保持不变：它是 `get_available_types()` 经 API 返回的技术语义名称，仅在前端映射缺失时作为回退。展示品牌与后端技术身份分离，避免数据层携带营销品牌。
 
 ### 实现方案
 
-`web/src/utils/kb_utils.js` 的 `getKbTypeLabel` 是 `milvus` 类型展示名的唯一映射点，弹出层 `DatabaseCreateFlowModal.vue`（类型卡片与步骤标题）、列表页 `DataBaseView.vue`（筛选下拉与卡片标签）、图谱区 `KnowledgeGraphSection.vue`（类型标签）都经它取值，替换该映射即覆盖全部展示面。`KnowledgeGraphSection.vue` 中"只有 Yuxi 类型的知识库支持知识图谱"的提示文案属于同一展示面，一词同步替换。测试 `database_create_flow.test.js` 的标签映射断言同步更新，保证旧值会使测试失败。
+`frontend/src/modules/knowledge/model/kb_utils.js` 的 `getKbTypeLabel` 是 `milvus` 类型展示名的唯一映射点，新建流程 `KnowledgeBaseCreateFlowModal.vue`（类型卡片与步骤标题）、列表页 `KnowledgeCatalog.vue`（筛选下拉与卡片标签）、图谱区 `KnowledgeGraphSection.vue`（类型标签）都经它取值，替换该映射即覆盖全部展示面。测试 `frontend/test/unit/knowledge_base_create_flow.test.js` 的标签映射断言同步更新为 `Smartfox`，保证旧值会使测试失败。
 
 ## 替代方案
 
@@ -28,6 +28,6 @@ Owner：web/src/utils/kb_utils.js
 
 ## 验证
 
-- Passed：`docker compose exec -T web pnpm run test:unit`（更新 `database_create_flow.test.js` 中 milvus 标签映射断言为 `Smartfox`）。
-- Passed：`docker compose exec -T web pnpm run lint:check`。
+- Passed：`docker compose exec -T frontend pnpm run test:unit`（更新 `frontend/test/unit/knowledge_base_create_flow.test.js` 中 milvus 标签映射断言为 `Smartfox`）。
+- Passed：`docker compose exec -T frontend pnpm run lint:check`。
 - 未验证：未做真实浏览器页面验证（纯字符串映射，未触发行为关键升级条件）。

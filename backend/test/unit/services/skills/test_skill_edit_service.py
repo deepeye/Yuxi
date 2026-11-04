@@ -7,17 +7,31 @@ import os
 from pathlib import Path
 
 import pytest
-from yuxi.agents.toolkits import service as tool_service
-from yuxi.services import artifact_service
-from yuxi.services.skills import edit as edit_service
-from yuxi.services.skills import projection as projection_service
-from yuxi.services.skills import shared as skill_service
-from yuxi.storage.postgres.models_business import Skill, User
+from yuxi.modules.extensions.tools import catalog as tool_service
+from yuxi.modules.extensions.skills import edit as edit_service
+from yuxi.modules.extensions.skills import content as content_service
+from yuxi.modules.extensions.skills import projection as projection_service
+from yuxi.modules.extensions.skills import shared as skill_service
+from yuxi.modules.extensions.skills import access as skill_access
+from yuxi.modules.extensions.skills.package import parse_skill_markdown
+from yuxi.modules.extensions.skills.models import Skill
+from yuxi.modules.identity.models import User
+from yuxi.modules.workspace.paths import user_workspace_dir
+from yuxi.modules.workspace.runtime_files import RuntimeFiles
 
 
 class _Session:
     def __init__(self, *, fail_commit: bool = False):
         self.fail_commit = fail_commit
+
+    def add(self, item):
+        pass
+
+    async def flush(self):
+        pass
+
+    async def rollback(self):
+        pass
 
     async def commit(self):
         if self.fail_commit:
@@ -52,7 +66,7 @@ def _setup_shared_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             pass
 
         async def get_by_slug(self, slug, *, for_update=False):
-            assert slug == "demo" and for_update
+            assert slug == "demo"
             return item
 
         async def update_metadata(self, target, *, name, description, updated_by):
@@ -61,9 +75,7 @@ def _setup_shared_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             target.updated_by = updated_by
             return target
 
-        async def update_dependencies(
-            self, target, *, tool_dependencies, mcp_dependencies, skill_dependencies, updated_by
-        ):
+        async def update_dependencies(self, target, *, tool_dependencies, mcp_dependencies, skill_dependencies, updated_by):
             target.tool_dependencies = tool_dependencies
             target.mcp_dependencies = mcp_dependencies
             target.skill_dependencies = skill_dependencies
@@ -77,32 +89,46 @@ def _setup_shared_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         return []
 
     monkeypatch.setattr(edit_service, "get_skill_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(content_service, "get_skill_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(content_service, "SkillRepository", FakeRepo)
+
+    async def prune(_db, _slug):
+        pass
+
+    monkeypatch.setattr(content_service, "prune_skill_content", prune)
     monkeypatch.setattr(edit_service, "SkillRepository", FakeRepo)
+    monkeypatch.setattr(skill_service, "SkillRepository", FakeRepo)
+    monkeypatch.setattr(skill_access, "SkillRepository", FakeRepo)
     monkeypatch.setattr(FakeRepo, "list_enabled_readable", accessible, raising=False)
     monkeypatch.setattr(tool_service, "get_tool_metadata", lambda: [])
     monkeypatch.setattr(skill_service, "get_enabled_mcp_server_slugs", mcps)
+    monkeypatch.setattr("yuxi.modules.extensions.mcp.service.get_enabled_mcp_server_slugs", mcps)
     return skill_dir, item, content
 
 
 def _user(uid: str) -> User:
-    return User(uid=uid, role="user")
+    return User(uid=uid, role="admin")
 
 
-def test_shared_artifact_source_ignores_personal_override_and_rejects_links(tmp_path, monkeypatch):
-    """同名个人源不改变共享 artifact 来源，链接不能逃离共享目录。"""
-    skill_dir, item, _old = _setup_shared_skill(tmp_path, monkeypatch)
-    personal_dir = tmp_path / "personal" / "demo"
+def test_shared_projection_ignores_personal_override_and_rejects_links(tmp_path, monkeypatch):
+    """共享 runtime 路径读取用户投影，同名个人 Skill 和来源变更均不替代它。"""
+    skill_dir, _item, _old = _setup_shared_skill(tmp_path, monkeypatch)
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "users"))
+    monkeypatch.setenv("YUXI_SKILL_PROJECTION_DIR", str(tmp_path / "projections"))
+    personal_dir = user_workspace_dir("owner") / "agents/skills/demo"
     personal_dir.mkdir(parents=True)
     (skill_dir / "notes.txt").write_text("shared", encoding="utf-8")
     (personal_dir / "notes.txt").write_text("personal", encoding="utf-8")
+    projection = projection_service.sync_user_accessible_skills("owner", {"demo": skill_dir}) / "demo"
+    (skill_dir / "notes.txt").write_text("new source", encoding="utf-8")
     target = tmp_path / "download.txt"
     target.write_bytes(b"")
 
-    artifact_service._copy_skill_file_to_path(item, "notes.txt", str(target), 1024)
+    RuntimeFiles("owner").download_to_path("/home/user/skills/demo/notes.txt", str(target), 1024)
     assert target.read_text(encoding="utf-8") == "shared"
-    (skill_dir / "link.txt").symlink_to(personal_dir / "notes.txt")
+    (projection / "link.txt").symlink_to(personal_dir / "notes.txt")
     with pytest.raises(PermissionError):
-        artifact_service._copy_skill_file_to_path(item, "link.txt", str(target), 1024)
+        RuntimeFiles("owner").download_to_path("/home/user/skills/demo/link.txt", str(target), 1024)
     assert target.read_text(encoding="utf-8") == "shared"
 
 
@@ -140,9 +166,7 @@ async def test_shared_node_delete_commit_failure_restores_file(tmp_path, monkeyp
 
     monkeypatch.setattr(edit_service, "get_manageable_skill_or_raise", manageable)
     with pytest.raises(RuntimeError, match="database commit failed"):
-        await edit_service.delete_skill_node(
-            _Session(fail_commit=True), slug="demo", relative_path="notes.txt", operator=_user("owner")
-        )
+        await edit_service.delete_skill_node(_Session(fail_commit=True), slug="demo", relative_path="notes.txt", operator=_user("owner"))
     assert (skill_dir / "notes.txt").read_text(encoding="utf-8") == "before"
 
 
@@ -179,7 +203,7 @@ async def test_edit_root_file_updates_bytes_and_database_dependencies(tmp_path, 
     assert result is item
     assert item.description == "updated"
     assert item.tool_dependencies == []
-    assert (skill_dir / "SKILL.md").read_text(encoding="utf-8") == new
+    assert content_service.content_path(item).joinpath("SKILL.md").read_text(encoding="utf-8") == new
     assert revision == hashlib.sha256(new.encode()).hexdigest()
 
 
@@ -187,7 +211,7 @@ async def test_edit_root_file_updates_bytes_and_database_dependencies(tmp_path, 
 async def test_edit_rejects_stale_revision_without_overwriting(tmp_path, monkeypatch):
     skill_dir, item, old = _setup_shared_skill(tmp_path, monkeypatch)
 
-    with pytest.raises(edit_service.SkillEditConflict, match="其他编辑"):
+    with pytest.raises(content_service.SkillEditConflict, match="其他编辑"):
         await edit_service.edit_shared_skill_file(
             _Session(),
             slug="demo",
@@ -216,7 +240,7 @@ async def test_edit_rejects_unmanaged_and_builtin_skills(tmp_path, monkeypatch):
             operator=_user("other"),
         )
     item.source_type = "builtin"
-    with pytest.raises(ValueError, match="内置 skill"):
+    with pytest.raises(ValueError, match="无权管理"):
         await edit_service.edit_shared_skill_file(
             _Session(),
             slug="demo",
@@ -267,62 +291,29 @@ async def test_edit_restores_file_when_database_commit_fails(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_edit_restores_file_when_directory_sync_fails(tmp_path, monkeypatch):
-    skill_dir, _item, _old = _setup_shared_skill(tmp_path, monkeypatch)
-    file = skill_dir / "notes.md"
-    file.write_text("before", encoding="utf-8")
-    original_fsync = os.fsync
-    calls = 0
-
-    def fail_first_directory_sync(fd):
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise OSError("directory sync failed")
-        original_fsync(fd)
-
-    monkeypatch.setattr(edit_service.os, "fsync", fail_first_directory_sync)
-    with pytest.raises(OSError, match="directory sync failed"):
-        await edit_service.edit_shared_skill_file(
-            _Session(),
-            slug="demo",
-            relative_path="notes.md",
-            content="after",
-            expected_revision=hashlib.sha256(b"before").hexdigest(),
-            operator=_user("owner"),
-        )
-
-    assert file.read_text(encoding="utf-8") == "before"
-
-
-@pytest.mark.asyncio
-async def test_projection_cannot_copy_edit_staging_file(tmp_path, monkeypatch):
-    skill_dir, _item, old = _setup_shared_skill(tmp_path, monkeypatch)
+async def test_projection_reads_old_content_until_database_commit(tmp_path, monkeypatch):
+    """未提交的新目录不进入用户投影，提交后只读取完整内容。"""
+    skill_dir, item, old = _setup_shared_skill(tmp_path, monkeypatch)
     monkeypatch.setattr(projection_service, "get_skill_projection_dir", lambda: tmp_path / "projections")
-    original_replace = os.replace
-    observed = False
+    db = _Session()
 
-    def observe_publication(source, target, *, src_dir_fd, dst_dir_fd):
-        nonlocal observed
-        observed = True
+    async def observe_commit():
         projection = projection_service.sync_user_accessible_skills("owner", {"demo": skill_dir}) / "demo"
-        assert (projection / "SKILL.md").read_text(encoding="utf-8") == old
+        assert (projection / "SKILL.md").read_text() == old
         assert not any(path.name.endswith(".tmp") for path in projection.rglob("*"))
-        return original_replace(source, target, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
 
-    monkeypatch.setattr(edit_service.os, "replace", observe_publication)
+    monkeypatch.setattr(db, "commit", observe_commit)
     updated = old.replace("old", "new")
     await edit_service.edit_shared_skill_file(
-        _Session(),
+        db,
         slug="demo",
         relative_path="SKILL.md",
         content=updated,
         expected_revision=hashlib.sha256(old.encode()).hexdigest(),
         operator=_user("owner"),
     )
-
-    assert observed
-    assert (skill_dir / "SKILL.md").read_text(encoding="utf-8") == updated
+    assert skill_dir.joinpath("SKILL.md").read_text() == old
+    assert content_service.content_path(item).joinpath("SKILL.md").read_text() == updated
 
 
 @pytest.mark.asyncio
@@ -340,7 +331,7 @@ async def test_dependency_form_updates_root_file_and_index(tmp_path, monkeypatch
         operator=_user("owner"),
     )
 
-    saved = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    saved = content_service.content_path(item).joinpath("SKILL.md").read_text(encoding="utf-8")
     assert result is item
     assert item.tool_dependencies == ["calculator"]
     assert "tool_dependencies:\n- calculator" in saved
@@ -352,9 +343,8 @@ async def test_dependency_edit_accepts_unquoted_multiline_description(tmp_path, 
     """预览可识别的多行描述也必须能保存依赖。"""
     skill_dir, item, _old = _setup_shared_skill(tmp_path, monkeypatch)
     original = (
-        "---\nname: demo\nslug: demo\ndescription:\n"
-        '  Use this skill for PDFs.\n  CREATE (from scratch): "make a PDF".\n'
-        "license: MIT\n---\n# Body\n"
+        "---\nname: demo\nslug: demo\ndescription:\n  Use this skill for PDFs."
+        '\n  CREATE (from scratch): "make a PDF".\nlicense: MIT\n---\n# Body\n'
     )
     (skill_dir / "SKILL.md").write_text(original, encoding="utf-8")
 
@@ -368,10 +358,10 @@ async def test_dependency_edit_accepts_unquoted_multiline_description(tmp_path, 
         operator=_user("owner"),
     )
 
-    saved = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    saved = content_service.content_path(item).joinpath("SKILL.md").read_text(encoding="utf-8")
     assert result is item
     assert item.description == 'Use this skill for PDFs. CREATE (from scratch): "make a PDF".'
-    assert skill_service.parse_skill_markdown(saved)[2] == item.description
+    assert parse_skill_markdown(saved)[2] == item.description
     assert revision == hashlib.sha256(saved.encode()).hexdigest()
 
 
@@ -428,3 +418,25 @@ async def test_export_closes_source_directory_when_tempfile_creation_fails(tmp_p
     import errno
 
     assert error.value.errno == errno.EBADF
+
+
+@pytest.mark.asyncio
+async def test_complete_edit_cannot_exceed_package_budget(tmp_path, monkeypatch):
+    """在线编辑的最终完整包同样受条目与字节限制。"""
+    from yuxi.modules.extensions.skills.content import commit_skill_content
+
+    skill_dir, item, old = _setup_shared_skill(tmp_path, monkeypatch)
+    for changes in (
+        [{"action": "mkdir", "path": f"d-{index}"} for index in range(2001)],
+        [{"action": "write", "path": "SKILL.md", "content": old + "x" * (50 * 1024 * 1024)}],
+    ):
+        with pytest.raises(ValueError, match="50 MiB"):
+            await commit_skill_content(
+                _Session(),
+                item=item,
+                operator=_user("owner"),
+                expected_revision=content_service.compute_skill_directory_hash(skill_dir).hex(),
+                changes=changes,
+            )
+        assert skill_dir.joinpath("SKILL.md").read_text() == old
+        assert item.dir_path == "shared/demo"
