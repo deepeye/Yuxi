@@ -89,7 +89,7 @@ def test_semantic_keeps_rows_atomic_with_context_even_above_length_target(token_
         """表格行无需通过聚类改写条件。"""
         pytest.fail("完整表格行不能交给语义聚类拆散")
 
-    monkeypatch.setattr("yuxi.modules.models.embed.select_embedding_model", lambda _: SimpleNamespace(encode=no_embedding))
+    monkeypatch.setattr("yuxi.modules.models.embed.select_embedding_model", lambda _: SimpleNamespace(batch_encode=no_embedding))
     records = chunk_markdown(
         source,
         "file",
@@ -129,7 +129,7 @@ def test_semantic_preserves_all_tables_and_adjacent_text_in_one_html_block(monke
 <table><tr><th>条件</th></tr><tr><td>专科</td></tr></table>
 第二张表的说明。</div>"""
 
-    monkeypatch.setattr("yuxi.modules.models.embed.select_embedding_model", lambda _: SimpleNamespace(encode=lambda _: []))
+    monkeypatch.setattr("yuxi.modules.models.embed.select_embedding_model", lambda _: SimpleNamespace(batch_encode=lambda _: []))
     records = chunk_markdown(
         source,
         "file",

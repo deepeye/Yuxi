@@ -811,7 +811,8 @@ class MilvusKB(KnowledgeExecutor):
             markdown_content = await documents.read_markdown_from_minio(file_meta["markdown_file"])
             filename = file_meta.get("filename")
 
-            chunks = self._split_text_into_chunks(markdown_content, file_id, filename, params)
+            # 语义切分会同步请求 embedding 服务，按批发送后耗时随文档长度增长，必须离开事件循环。
+            chunks = await await_io(asyncio.to_thread(self._split_text_into_chunks, markdown_content, file_id, filename, params))
             for chunk in chunks:
                 chunk["generation"] = generation
                 chunk["chunk_id"] = f"{chunk['chunk_id'][:80]}-g{generation}"[:100]

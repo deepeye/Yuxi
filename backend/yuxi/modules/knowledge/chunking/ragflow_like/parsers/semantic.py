@@ -53,7 +53,8 @@ def chunk_markdown(markdown_content: str, parser_config: dict[str, Any] | None =
         embed_model_id = parser_config.get("embed_model_id")
         if not embed_model_id:
             raise ValueError("语义切分缺少 embed_model_id")
-        embed_fn = select_embedding_model(embed_model_id).encode
+        # 句子数量不受控，必须按模型配置的批量大小分组，避免把全部句子放进一次请求。
+        embed_fn = select_embedding_model(embed_model_id).batch_encode
 
     md = MarkdownIt("commonmark").enable("table")
     md.use(dollarmath_plugin, allow_space=True, allow_digits=True)

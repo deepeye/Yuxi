@@ -17,7 +17,7 @@ for sentence, label, token_count in zip(sentences, labels, sentence_token_counts
 
 sklearn 不会因条数不匹配报错——实测 4 句配 2 个向量时返回 2 个标签，`zip` 得到 2 对，另外 2 句消失。
 
-进入该函数的 `embed_fn` 来自 `semantic.py:56` 的 `select_embedding_model(...).encode`，是单次调用、不经 `batch_encode`；调用方注入自定义 `embed_fn`（单测、外部集成）时完全绕过模型层校验。
+进入该函数的 `embed_fn` 来自 `semantic.py` 中 `select_embedding_model(...).encode` 的绑定，是单次调用、不经 `batch_encode`（该绑定已在 [2026-11-05 语义切分按模型配置批量编码](2026-11-05-semantic-chunking-embedding-batches.md) 中改为 `batch_encode`）；调用方注入自定义 `embed_fn`（单测、外部集成）时完全绕过模型层校验。
 
 ## 决策
 
