@@ -25,6 +25,10 @@ Yuxi 是面向需要企业自部署的多用户 Agent 产品，且需要自己�
 - **管理团队使用范围**：按用户、部门和共享范围管理知识库、智能体、Skills 和模型。
 - **对比运行质量**：评估知识库的检索结果；完整智能体评估可通过公开 API 自行构建，见[智能体评估](docs/agents/agent-evaluation.md)。
 
+## 系统架构
+
+![Yuxi 系统架构图](https://oss-img.xerrors.cn/github/yuxi-architecture-20261112-f3046585a.png)
+
 ## 快速启动
 
 语析（Yuxi）默认使用 Docker Compose 和 Container 沙盒启动。每段智能体执行使用独立临时容器，工作目录文件持久保留，无需额外准备 KVM 节点。
@@ -33,14 +37,14 @@ Yuxi 是面向需要企业自部署的多用户 Agent 产品，且需要自己�
 
 安装 Git、[Docker Engine](https://docs.docker.com/get-docker/) 和 Docker Compose v2，准备一个可用的大模型 API。macOS/Windows 使用 Docker Desktop 的 Linux 容器模式，并允许项目目录共享。
 
-本教程使用 `v0.8.0.beta7` 测试版本。0.8 仅面向全新部署，旧数据库、索引和文件布局不提供自动升级；请用独立数据目录试用，见[0.8.0 更新说明](docs/develop-guides/releases/0.8.0.md)。
+本教程使用 `v0.8.0`。0.8 仅面向全新部署，旧数据库、索引和文件布局不提供自动升级；请用独立数据目录，见[0.8.0 更新说明](docs/develop-guides/releases/0.8.0.md)。
 
 Container 适合本地试用和单租户可信代码，共享宿主内核。需要 VM 隔离或持久用户环境时，在[快速开始](docs/intro/quick-start.md)选择 Cube 并准备 Linux/KVM 执行节点。
 
 ### 1. 获取代码并初始化
 
 ```bash
-git clone --branch v0.8.0.beta7 --depth 1 https://github.com/xerrors/Yuxi.git
+git clone --branch v0.8.0 --depth 1 https://github.com/xerrors/Yuxi.git
 cd Yuxi
 ./scripts/init.sh
 ```

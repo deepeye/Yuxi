@@ -1,11 +1,11 @@
 <template>
   <div class="mcp-cards-page extension-page-root">
-    <PageShoulder search-placeholder="搜索 MCP..." v-model:search="searchQuery">
+    <PageShoulder search-placeholder="搜索连接器..." v-model:search="searchQuery">
       <template #actions>
-        <a-tooltip title="刷新 MCP" placement="bottom">
+        <a-tooltip title="刷新连接器" placement="bottom">
           <a-button
             class="yuxi-refresh-button lucide-icon-btn"
-            aria-label="刷新 MCP"
+            aria-label="刷新连接器"
             :disabled="loading"
             @click="fetchServers"
           >
@@ -18,7 +18,7 @@
         </a-tooltip>
         <a-button v-if="userStore.isSuperAdmin" type="primary" @click="handleMcpAdd" class="lucide-icon-btn">
           <Plus :size="14" />
-          <span>新增服务</span>
+          <span>新增连接器</span>
         </a-button>
       </template>
     </PageShoulder>
@@ -29,42 +29,39 @@
     >
       <a-empty
         :image="false"
-        :description="searchQuery ? '无匹配 MCP' : '暂无 MCP，点击上方按钮添加'"
+        :description="searchQuery ? '无匹配连接器' : '暂无连接器，点击上方按钮添加'"
       />
     </div>
 
     <template v-else>
       <template v-for="group in visibleServerGroups" :key="group.key">
         <div class="extension-section-header">{{ group.title }}</div>
-        <ExtensionCardGrid :min-width="300">
+        <ExtensionCardGrid :min-width="280">
           <InfoCard
             v-for="server in group.servers"
             :key="server.slug"
-            variant="mini"
-            :icon-color="getExtensionIconColor(server.slug, themeStore.isDark)"
             :title="formatExtensionCardTitle(server.name)"
-            :description="[server.description, server.auth_mode === 'oauth' ? mcpConnectionLabel(server.connection_status) : ''].filter(Boolean).join(' · ') || '暂无描述'"
+            :subtitle="server.slug"
+            :description="server.description || '暂无描述'"
+            :tags="mcpCardTags(server)"
+            :default-icon="getSkillIcon(`${server.slug} ${server.name}`, Plug)"
+            :icon-color="getExtensionIconColor(server.slug, themeStore.isDark)"
             @click="handleCardClick(server)"
           >
-            <template #icon>
-              <button type="button" class="mcp-card-open" :aria-label="`查看 ${server.name}`" @click.stop="handleCardClick(server)">
-                <Plug :size="16" aria-hidden="true" />
-              </button>
-            </template>
-            <template v-if="server.can_manage" #action>
+            <template v-if="server.can_manage" #actions>
               <button
                 type="button"
-                class="mcp-card-action"
-                :class="{ 'mcp-card-action-danger': group.enabled }"
+                class="mcp-enabled-action"
+                :class="{ enabled: !!server.enabled }"
                 :disabled="isActionLoading(server)"
-                :aria-label="group.enabled ? '停用服务' : '启用服务'"
-                @click.stop="handleSetServerEnabled(server, !group.enabled)"
+                :aria-label="server.enabled ? '停用连接器' : '启用连接器'"
+                @click.stop="handleSetServerEnabled(server, !server.enabled)"
               >
-                <template v-if="group.enabled">
+                <Plus v-if="!server.enabled" :size="15" class="action-icon" />
+                <template v-else>
                   <Check :size="15" class="action-icon action-icon-check" />
-                  <Trash2 :size="15" class="action-icon action-icon-trash" />
+                  <Minus :size="15" class="action-icon action-icon-minus" />
                 </template>
-                <Plus v-else :size="15" class="action-icon" />
               </button>
             </template>
           </InfoCard>
@@ -86,7 +83,7 @@
         <div class="mcp-basic-info-header">
           <div class="mcp-basic-info-title-area">
             <div class="mcp-basic-info-icon" :style="{ color: getExtensionIconColor(previewServer.slug, themeStore.isDark) }">
-              <Plug :size="18" aria-hidden="true" />
+              <component :is="getSkillIcon(`${previewServer.slug} ${previewServer.name}`, Plug)" :size="18" aria-hidden="true" />
             </div>
             <div class="mcp-basic-info-title-text">
               <div class="mcp-basic-info-title">
@@ -115,21 +112,11 @@
             <label>描述</label>
             <span>{{ previewServer.description || '暂无描述' }}</span>
           </div>
-          <section
-            v-if="previewServer.auth_mode === 'oauth'"
-            class="mcp-authorization-section"
-            aria-label="授权状态"
-          >
-            <div class="mcp-authorization-copy">
-              <h3>个人授权</h3>
-              <p>智能体将使用你的个人账号访问此服务。</p>
-            </div>
-            <McpConnectionControls :server="previewServer" @changed="refreshPreview" />
-          </section>
+          <McpConnectionControls :key="userStore.uid" :server="previewServer" @changed="refreshPreview" />
         </div>
         <div v-if="previewServer.can_manage" class="mcp-basic-info-footer">
           <a-button @click="closeBasicInfo">关闭</a-button>
-          <a-button type="primary" @click="navigateToDetail(previewServer)">管理 MCP</a-button>
+          <a-button type="primary" @click="navigateToDetail(previewServer)">管理连接器</a-button>
         </div>
       </div>
     </a-modal>
@@ -146,7 +133,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { Check, Plus, RefreshCw, Trash2, Plug } from '@lucide/vue'
+import { Check, Minus, Plus, RefreshCw, Plug } from '@lucide/vue'
 import { useUserStore } from '@/modules/identity'
 import { mcpApi } from '@/apis/mcp_api'
 import ExtensionCardGrid from './ExtensionCardGrid.vue'
@@ -154,9 +141,10 @@ import InfoCard from '@/shared/ui/InfoCard.vue'
 import PageShoulder from '@/shared/ui/PageShoulder.vue'
 import McpFormModal from './McpFormModal.vue'
 import McpConnectionControls from './McpConnectionControls.vue'
-import { mcpAuthLabel, mcpConnectionLabel } from '@/modules/extensions/model/mcpOAuth'
+import { mcpAuthLabel, mcpCardTags } from '@/modules/extensions/model/mcpOAuth'
 import { formatExtensionCardTitle } from '@/modules/extensions/model/extensionDisplayName'
 import { getExtensionIconColor } from '@/shared/lib/extensionIconColor'
+import { getSkillIcon } from '@/shared/lib/skill_icon_utils'
 import { useThemeStore } from '@/shared/model/theme'
 
 const themeStore = useThemeStore()
@@ -210,6 +198,7 @@ async function refreshPreview() {
   const slug = previewServer.value?.slug
   await fetchServers()
   previewServer.value = servers.value.find((server) => server.slug === slug) || null
+  if (!previewServer.value) basicInfoVisible.value = false
 }
 
 const isActionLoading = (server) => actionLoadingSlug.value === server?.slug
@@ -248,7 +237,7 @@ const fetchServers = async () => {
       servers.value = result.data || []
     }
   } catch (err) {
-    message.error(err.message || '获取 MCP 列表失败')
+    message.error(err.message || '获取连接器列表失败')
   } finally {
     loading.value = false
   }
@@ -265,11 +254,11 @@ onMounted(async () => {
     if (result) {
       try {
         await mcpApi.complete(String(result))
-        message.success('MCP 账号已连接')
+        message.success('连接器账号已连接')
       } catch (err) {
         message.error(err.message || '授权结果已失效，请重新连接')
       }
-    } else message.error('MCP 授权未完成，请重新连接')
+    } else message.error('连接器授权未完成，请重新连接')
   }
   await fetchServers()
 })
@@ -278,26 +267,12 @@ defineExpose({ fetchServers, loading })
 </script>
 
 <style lang="less" scoped>
-.mcp-card-open {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-
-  &:focus-visible {
-    outline: 2px solid var(--main-color);
-    outline-offset: 3px;
-    border-radius: 4px;
-  }
+.dark .mcp-cards-page :deep(.info-card) {
+  --border-surface: transparent;
+  --border-surface-hover: transparent;
 }
 
-.mcp-card-action {
+.mcp-enabled-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -306,7 +281,7 @@ defineExpose({ fetchServers, loading })
   border: 1px solid var(--gray-150);
   border-radius: 8px;
   background: var(--gray-0);
-  color: var(--main-color);
+  color: var(--gray-600);
   cursor: pointer;
   transition:
     border-color 0.18s ease,
@@ -316,7 +291,7 @@ defineExpose({ fetchServers, loading })
   &:hover,
   &:focus {
     outline: none;
-    border-color: var(--main-200);
+    border-color: var(--gray-300);
     background: var(--gray-50);
   }
 
@@ -325,10 +300,10 @@ defineExpose({ fetchServers, loading })
     opacity: 0.45;
   }
 
-  &.mcp-card-action-danger {
+  &.enabled {
     color: var(--color-success-700);
 
-    .action-icon-trash {
+    .action-icon-minus {
       display: none;
     }
 
@@ -342,7 +317,7 @@ defineExpose({ fetchServers, loading })
         display: none;
       }
 
-      .action-icon-trash {
+      .action-icon-minus {
         display: block;
       }
     }
@@ -356,7 +331,7 @@ defineExpose({ fetchServers, loading })
 .mcp-basic-info-panel {
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  min-height: 300px;
 }
 
 .mcp-basic-info-header {
@@ -429,13 +404,12 @@ defineExpose({ fetchServers, loading })
 }
 
 .mcp-basic-info-body {
-  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 20px;
   max-height: min(56vh, 520px);
-  padding: 14px 16px;
   overflow-y: auto;
-  border: 1px solid var(--gray-150);
-  border-radius: 12px;
-  background: var(--gray-25);
 }
 
 .mcp-basic-info-row {
@@ -457,25 +431,11 @@ defineExpose({ fetchServers, loading })
   }
 }
 
-.mcp-authorization-section {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 16px;
-  margin-top: 24px;
-
-  h3 { margin: 0; color: var(--gray-900); font-size: 14px; font-weight: 600; }
-  p { margin: 4px 0 0; color: var(--gray-500); font-size: 12px; line-height: 20px; }
-}
-
-.mcp-authorization-copy { flex: 1 1 240px; min-width: 0; }
-
 .mcp-basic-info-footer {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 20px;
 }
 </style>

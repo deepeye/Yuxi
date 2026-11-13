@@ -11,10 +11,10 @@ const sandbox = ref('container')
 
 ## 1. 下载代码
 
-本文固定使用 `v0.8.0.beta7` 测试版本。
+本文固定使用 `v0.8.0`。
 
 ```bash
-git clone --branch v0.8.0.beta7 --depth 1 https://example.com/your-fork/Yuxi.git
+git clone --branch v0.8.0 --depth 1 https://example.com/your-fork/Yuxi.git
 cd Yuxi
 ```
 

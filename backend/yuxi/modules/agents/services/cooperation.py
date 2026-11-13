@@ -7,6 +7,7 @@ import copy
 import re
 import uuid
 from datetime import timedelta
+from typing import Literal
 
 from sqlalchemy import select
 
@@ -157,10 +158,30 @@ class SessionCooperationService:
         )
         return {"status": "received", "message_id": event.id, "session_id": member.thread_id}
 
-    async def list_sessions(self) -> dict:
-        """返回当前用户和 APP 的全部会话及进度。"""
+    async def list_sessions(self, *, scope: Literal["project", "all"] = "project", offset: int = 0) -> dict:
+        """默认返回当前项目目录，历史会话按十条分页。"""
+        if scope not in {"project", "all"}:
+            raise ValueError("会话查询范围必须是 project 或 all")
+        if offset < 0:
+            raise ValueError("offset 不能为负数")
         _, caller = await self.caller()
-        return await tree_snapshot(self.db, caller, all_sessions=True)
+        rows = await self.repo.directory(caller, all_projects=scope == "all", offset=offset)
+        return {
+            "scope": scope,
+            "sessions": [
+                {
+                    "session_id": member.thread_id,
+                    "title": member.title or member.cooperation_name,
+                    "path": member.cooperation_path,
+                    "tree_root_session_id": member.tree_root_thread_id,
+                    "project_id": member.project_id,
+                    "turn_id": turn.id if turn else None,
+                    "turn_status": turn.status if turn else None,
+                    "waiting_for": (turn.waitpoint or {}).get("kind") if turn else None,
+                }
+                for member, turn in rows
+            ],
+        }
 
     async def list_agents(self) -> dict:
         """复用公开目录的可调用范围，只输出最小角色信息。"""
@@ -381,15 +402,14 @@ def session_identity(member: Session) -> dict:
     }
 
 
-async def tree_snapshot(db, caller: Session, *, all_sessions: bool = False) -> dict:
+async def tree_snapshot(db, caller: Session) -> dict:
     """返回完整协作摘要；结果正文由精确任务查询拥有。"""
-    rows = await CooperationRepository(db).summary(caller, all_sessions=all_sessions)
+    rows = await CooperationRepository(db).summary(caller)
     return {
         "tree_root_session_id": caller.tree_root_thread_id,
         "sessions": [
             {
                 **session_identity(member),
-                **({"project_id": member.project_id} if all_sessions else {}),
                 "title": member.title,
                 "status": member.status,
                 "queue_paused": member.queue_paused,
@@ -416,25 +436,27 @@ async def get_cooperation_summary(*, db, scope: ActorScope, thread_id: str) -> d
 async def read_task_results(db, caller: Session, *, input_ids: list[str] | None = None, turn_id: str | None = None) -> list[dict]:
     """从 Input 到精确 Turn/Run 回读任务结果及可观察终态。"""
     rows = await CooperationRepository(db).task_rows(caller, input_ids=input_ids, turn_id=turn_id)
-    if not rows or (input_ids is not None and {row[1].id for row in rows} != set(input_ids)):
+    if not rows or (input_ids is not None and {row.input_id for row in rows} != set(input_ids)):
         raise ValueError("任务不存在或不属于当前用户与 APP 授权范围")
     results = []
-    for member, input_item, turn, run, message in rows:
-        if message and (message.turn_id != turn.id or message.run_id != run.id or message.session_record_id != member.id):
+    for row in rows:
+        if row.message_id is not None and (
+            row.message_turn_id != row.turn_id or row.message_run_id != row.run_id or row.message_session_record_id != row.session_record_id
+        ):
             raise ValueError("协作结果消息的 Turn/Run 归属不一致")
-        status = turn.status if turn else input_item.status
+        status = row.turn_status if row.turn_id else row.input_status
         results.append(
             {
-                "session_id": member.thread_id,
-                "input_id": input_item.id if input_item else None,
-                "input_status": input_item.status if input_item else None,
-                "turn_id": turn.id if turn else None,
+                "session_id": row.session_id,
+                "input_id": row.input_id,
+                "input_status": row.input_status,
+                "turn_id": row.turn_id,
                 "status": status,
                 "terminal": status in {"completed", "failed", "cancelled"},
-                "current_run_id": turn.current_run_id if turn else None,
-                "result_run_id": turn.result_run_id if turn else None,
-                "output": message.content if message else None,
-                "error": {"type": run.error_type, "message": run.error_message} if run and run.error_type else None,
+                "current_run_id": row.current_run_id,
+                "result_run_id": row.result_run_id,
+                "output": row.output,
+                "error": {"type": row.error_type, "message": row.error_message} if row.error_type else None,
             }
         )
     if input_ids is not None:

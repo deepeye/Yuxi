@@ -2,14 +2,47 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.background_jobs.models import BackgroundJobRecord
 from yuxi.modules.knowledge.file_status import FileStatus, status_filter_values
 from yuxi.modules.knowledge.models import KnowledgeBase, KnowledgeFile, KnowledgeProjectionOutbox
+from yuxi.modules.knowledge.utils.kb_utils import content_parser_id
 from yuxi.shared.datetime import utc_now
+
+# 一次文件过滤最多接受的标识数量。文件名搜索和检索 file_ids 共用。
+MAX_FILTER_FILE_IDS = 10_000
+
+
+def first_matching_fingerprint(records, parser_id: str):
+    """候选已按创建时间排序，返回解析器一致的第一条。"""
+
+    for record in records:
+        if content_parser_id(getattr(record, "processing_params", None)) == parser_id:
+            return record
+    return None
+
+
+# 列表排序只接受这些字段和 ant-design-vue 的方向；未传时保持默认顺序。
+_DOCUMENT_SORT_FIELDS = frozenset({"filename", "content_amount", "status", "created_at"})
+_DOCUMENT_SORT_ORDERS = frozenset({"ascend", "descend"})
+# 与前端 knowledge_file_policy.js 的 STATUS_SORT_ORDER 一致；未知状态更靠后。
+_STATUS_SORT_WEIGHTS = (
+    ("done", 1),
+    ("indexed", 1),
+    ("processing", 2),
+    ("indexing", 2),
+    ("parsing", 2),
+    ("waiting", 3),
+    ("uploaded", 3),
+    ("parsed", 3),
+    ("failed", 4),
+    ("error_indexing", 4),
+    ("error_parsing", 4),
+)
+_UNKNOWN_STATUS_SORT_WEIGHT = 5
 
 
 class KnowledgeFileRepository:
@@ -38,10 +71,14 @@ class KnowledgeFileRepository:
         page_size: int = 100,
         recursive: bool = False,
         files_only: bool = False,
+        sort_by: str | None = None,
+        sort_order: str | None = None,
     ) -> tuple[list[KnowledgeFile], int]:
+        """按筛选结果整体排序后再分页；非法排序在查询前失败。"""
         page = max(int(page or 1), 1)
         page_size = min(max(int(page_size or 100), 1), 500)
         offset = (page - 1) * page_size
+        order_by = self._document_order_by(sort_by, sort_order)
         has_status_filter = self._status_condition(status) is not None
         effective_recursive = recursive and has_status_filter
         filters = self._document_filters(
@@ -56,19 +93,50 @@ class KnowledgeFileRepository:
             total_result = await session.execute(select(func.count()).select_from(KnowledgeFile).where(*filters))
             total = int(total_result.scalar_one() or 0)
 
-            result = await session.execute(
-                select(KnowledgeFile)
-                .where(*filters)
-                .order_by(
-                    KnowledgeFile.is_folder.desc(),
-                    func.lower(KnowledgeFile.filename).asc(),
-                    KnowledgeFile.created_at.desc(),
-                    KnowledgeFile.file_id.asc(),
-                )
-                .offset(offset)
-                .limit(page_size)
-            )
+            result = await session.execute(select(KnowledgeFile).where(*filters).order_by(*order_by).offset(offset).limit(page_size))
             return list(result.scalars().all()), total
+
+    @staticmethod
+    def _normalize_document_sort(sort_by: str | None, sort_order: str | None) -> tuple[str | None, str | None]:
+        """空排序表示默认顺序；只给字段或方向、或给出未支持的值都拒绝。"""
+        field = (sort_by or "").strip() or None
+        order = (sort_order or "").strip() or None
+        if field is None and order is None:
+            return None, None
+        if field not in _DOCUMENT_SORT_FIELDS or order not in _DOCUMENT_SORT_ORDERS:
+            raise ValueError("Unsupported document sort field or direction")
+        return field, order
+
+    def _document_order_by(self, sort_by: str | None, sort_order: str | None):
+        """生成全量排序。filename 两种方向都先排文件夹；其他列文件夹与文件一起排。"""
+        field, order = self._normalize_document_sort(sort_by, sort_order)
+        if field is None:
+            return (
+                KnowledgeFile.is_folder.desc(),
+                func.lower(KnowledgeFile.filename).asc(),
+                KnowledgeFile.created_at.desc(),
+                KnowledgeFile.file_id.asc(),
+            )
+
+        descending = order == "descend"
+        tie = KnowledgeFile.file_id.asc()
+        if field == "filename":
+            name = func.lower(KnowledgeFile.filename)
+            return (KnowledgeFile.is_folder.desc(), name.desc() if descending else name.asc(), tie)
+        if field == "content_amount":
+            amount = func.coalesce(KnowledgeFile.token_count, 0)
+            return (amount.desc() if descending else amount.asc(), tie)
+        if field == "created_at":
+            created = KnowledgeFile.created_at
+            # 缺失时间视为最早，与前端 compareFileCreatedAt 的空值等价。
+            created_order = created.desc().nulls_last() if descending else created.asc().nulls_first()
+            return (created_order, tie)
+
+        status_weight = case(
+            *((KnowledgeFile.status == status, rank) for status, rank in _STATUS_SORT_WEIGHTS),
+            else_=_UNKNOWN_STATUS_SORT_WEIGHT,
+        )
+        return (status_weight.desc() if descending else status_weight.asc(), tie)
 
     @staticmethod
     def _status_condition(status: str | None):
@@ -161,7 +229,7 @@ class KnowledgeFileRepository:
         *,
         kb_id: str,
         filename_pattern: str,
-        limit: int = 10_000,
+        limit: int = MAX_FILTER_FILE_IDS,
     ) -> list[str]:
         normalized_pattern = filename_pattern.replace("%", "").strip().lower()
         if not normalized_pattern:
@@ -179,9 +247,49 @@ class KnowledgeFileRepository:
                     func.lower(KnowledgeFile.filename).like(f"%{escaped_pattern}%", escape="\\"),
                 )
                 .order_by(KnowledgeFile.file_id.asc())
-                .limit(min(max(int(limit or 100), 1), 10_000))
+                .limit(min(max(int(limit or 100), 1), MAX_FILTER_FILE_IDS))
             )
             return [str(file_id) for file_id in result.scalars().all()]
+
+    async def list_live_file_ids(self, *, kb_id: str, file_ids: list[str]) -> list[str]:
+        """返回目标知识库中仍然存在的非目录文件。"""
+
+        if not file_ids:
+            return []
+        async with pg_manager.get_async_session_context() as session:
+            result = await session.scalars(
+                select(KnowledgeFile.file_id).where(
+                    KnowledgeFile.kb_id == kb_id,
+                    KnowledgeFile.file_id.in_(file_ids),
+                    KnowledgeFile.deleted_at.is_(None),
+                    KnowledgeFile.is_folder.is_(False),
+                )
+            )
+            return [str(file_id) for file_id in result.all()]
+
+    async def find_live_file_by_fingerprint(
+        self,
+        session: AsyncSession,
+        *,
+        kb_id: str,
+        content_hash: str,
+        file_size: int,
+        parser_id: str,
+    ) -> KnowledgeFile | None:
+        """在同一知识库内按内容哈希、大小和解析器查找未删除文件。"""
+
+        result = await session.scalars(
+            select(KnowledgeFile)
+            .where(
+                KnowledgeFile.kb_id == kb_id,
+                KnowledgeFile.deleted_at.is_(None),
+                KnowledgeFile.is_folder.is_(False),
+                KnowledgeFile.content_hash == content_hash,
+                KnowledgeFile.file_size == file_size,
+            )
+            .order_by(KnowledgeFile.created_at.asc(), KnowledgeFile.file_id.asc())
+        )
+        return first_matching_fingerprint(result.all(), parser_id)
 
     @staticmethod
     def _escape_like_pattern(value: str) -> str:
@@ -439,8 +547,12 @@ class KnowledgeFileRepository:
         processing_owner: str | None = None,
         processing_params: dict | None = None,
         kb_additional_params: dict | None = None,
+        missing_markdown_statuses: set[str] | None = None,
     ) -> KnowledgeFile | None:
-        """条件领取或完成文件处理；参数合并和执行权发布共享同一事务。"""
+        """条件领取或完成文件处理；参数合并和执行权发布共享同一事务。
+
+        missing_markdown_statuses 只在同一次行锁里额外放行没有正文的非目录文件。
+        """
         lease_job_id = processing_job_id or data.get("processing_job_id")
         lease_owner = processing_owner or data.get("processing_owner")
         if (lease_job_id is None) != (lease_owner is None):
@@ -449,11 +561,21 @@ class KnowledgeFileRepository:
         if not sanitized_data:
             return await self.get_by_file_id(file_id)
 
+        status_match = KnowledgeFile.status.in_(sorted(allowed_statuses))
+        if missing_markdown_statuses:
+            status_match = or_(
+                status_match,
+                and_(
+                    KnowledgeFile.status.in_(sorted(missing_markdown_statuses)),
+                    KnowledgeFile.is_folder.is_(False),
+                    or_(KnowledgeFile.markdown_file.is_(None), KnowledgeFile.markdown_file == ""),
+                ),
+            )
         filters = [
             KnowledgeFile.kb_id == kb_id,
             KnowledgeFile.file_id == file_id,
             KnowledgeFile.deleted_at.is_(None),
-            KnowledgeFile.status.in_(sorted(allowed_statuses)),
+            status_match,
         ]
         if processing_job_id is not None:
             filters.append(KnowledgeFile.processing_job_id == processing_job_id)

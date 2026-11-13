@@ -1,6 +1,6 @@
 [project]
 name = "yuxi"
-version = "0.8.0.beta7"
+version = "0.8.0"
 description = "Yuxi 智能知识库与知识图谱平台核心后端包"
 readme = "README.md"
 license = { text = "MIT" }
@@ -87,7 +87,6 @@ constraint-dependencies = [
     "opentelemetry-api>=1.45.1",
     "cryptography>=48.0.1",
     "langchain>=1.3.9",
-    "langchain-anthropic>=1.4.6",
     "pyjwt>=2.13.0",
     "pyasn1>=0.6.5",
     "python-multipart>=0.0.31",

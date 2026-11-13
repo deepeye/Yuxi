@@ -14,6 +14,8 @@ from yuxi.api.main import app
 from yuxi.api.routers import models as model_routes
 from yuxi.api.routers.knowledge import management as knowledge_routes
 from yuxi.modules.documents import service as document_service
+from yuxi.modules.knowledge.options import knowledge_url_import_policy
+from yuxi.modules.knowledge.utils import url_fetcher
 from yuxi.modules.models.providers.cache import model_cache
 from yuxi.shared.errors import StateConflictError
 
@@ -26,6 +28,12 @@ BASE = "/api/knowledge/knowledge-bases/kb_fixture"
 async def error_http(monkeypatch):
     """启动实际应用；仅隔离身份与无需使用的数据库依赖。"""
     user = SimpleNamespace(uid="audit-user", role="superadmin")
+
+    async def url_policy():
+        """错误文案测试隔离配置持久化，配置保存由独立集成测试验证。"""
+        return knowledge_url_import_policy.resolve({})
+
+    monkeypatch.setattr(url_fetcher, "knowledge_url_import_policy", SimpleNamespace(get=url_policy))
 
     async def database():
         """本例不访问持久化，未知失败由业务调用边界注入。"""
@@ -51,7 +59,7 @@ async def error_http(monkeypatch):
 @pytest.mark.parametrize(
     ("method", "suffix", "target", "payload", "expected_status"),
     [
-        ("POST", "/query", "aquery", {"query": "fixture", "meta": {}}, 500),
+        ("POST", "/query", "retrieve", {"query": "fixture", "meta": {}}, 500),
         ("GET", "/query-params", "get_kb_query_params_config", None, 500),
         ("PUT", "/query-params", "update_kb_query_params", {"top_k": 4}, 500),
         ("POST", "/sample-questions", "generate_knowledge_base_sample_questions", {}, 500),
@@ -74,9 +82,11 @@ async def test_unknown_knowledge_failure_hides_internal_detail(error_http, monke
         "fetch_url_content",
     }
     owner = knowledge_routes if target in local_targets else knowledge_routes.knowledge_base_manager
-    monkeypatch.setattr(owner, target, AsyncMock(side_effect=RuntimeError(PRIVATE_DETAIL)))
+    failure = AsyncMock(side_effect=RuntimeError(PRIVATE_DETAIL))
+    monkeypatch.setattr(owner, target, failure)
     path = suffix if suffix.startswith("/api/") else BASE + suffix
     response = await error_http.request(method, path, json=payload)
+    failure.assert_awaited_once()
     assert response.status_code == expected_status, response.text
     assert PRIVATE_DETAIL not in response.text
     if response.headers.get("content-type", "").startswith("application/json"):
@@ -89,13 +99,26 @@ async def test_unknown_knowledge_failure_hides_internal_detail(error_http, monke
 async def test_known_domain_rejection_keeps_public_meaning(error_http, monkeypatch, suffix):
     """已知领域错误继续使用原有状态码和可公开文本。"""
     error = StateConflictError("已有任务，请稍后重试")
-    monkeypatch.setattr(knowledge_routes.knowledge_base_manager, "aquery", AsyncMock(side_effect=error))
+    monkeypatch.setattr(knowledge_routes.knowledge_base_manager, "retrieve", AsyncMock(side_effect=error))
     monkeypatch.setattr(knowledge_routes, "submit_document_action", AsyncMock(side_effect=error))
     monkeypatch.setattr(knowledge_routes, "submit_pending_document_action", AsyncMock(side_effect=error))
     payload = {"query": "fixture", "meta": {}} if suffix == "/query" else {"file_ids": ["file_fixture"]}
     response = await error_http.post(BASE + suffix, json=payload)
     assert response.status_code == 409, response.text
     assert response.json() == {"detail": "已有任务，请稍后重试"}
+
+
+@pytest.mark.parametrize("suffix", ["/query", "/query-test"])
+async def test_query_preserves_top_level_scoring_and_highlights(error_http, monkeypatch, suffix):
+    """管理检索保留旧调用方所需的顶层字段与标准来源身份。"""
+    highlights = [[{"text": "命中", "matched": True}]]
+    metadata = {"score": 0, "score_type": "cosine", "highlights": highlights}
+    chunk = {"id": "chunk", "kb_id": "kb_fixture", "file_id": "file", "content": "命中", "metadata": metadata}
+    monkeypatch.setattr(knowledge_routes.knowledge_base_manager, "retrieve", AsyncMock(return_value={"results": [chunk]}))
+    response = await error_http.post(BASE + suffix, json={"query": "命中"})
+    assert response.status_code == 200, response.text
+    results = response.json()["result"] if suffix == "/query" else response.json()
+    assert results == [{**chunk, "score": 0, "score_type": "cosine", "highlights": highlights}]
 
 
 @pytest.mark.parametrize(
@@ -210,12 +233,37 @@ async def test_real_url_fetch_helper_hides_transport_failure(error_http, monkeyp
     response = await error_http.post("/api/knowledge/files/fetch-url", json={"url": "https://example.test"})
     assert response.status_code == 400, response.text
     assert PRIVATE_DETAIL not in response.text
-    assert response.json()["detail"] in {"Failed to fetch URL", "Error fetching URL"}
+    detail = response.json()["detail"]
+    assert detail["code"] == "url_fetch_failed"
+    assert detail["message"] in {"网页抓取失败，请确认网址可访问后重试", "网页抓取失败，请稍后重试"}
 
 
-async def test_real_url_fetch_keeps_controlled_validation_message(error_http, monkeypatch):
-    """抓取边界自己定义的白名单拒绝仍保留可公开说明。"""
-    monkeypatch.setenv("YUXI_URL_WHITELIST", "example.test")
+@pytest.mark.parametrize(
+    ("whitelist", "expected_message"),
+    [
+        ("", "URL 导入未启用，请联系管理员配置域名白名单"),
+        ("example.test", "URL 校验失败：网址域名不在 URL 导入白名单中，请联系管理员配置"),
+    ],
+)
+async def test_real_url_fetch_keeps_controlled_validation_message(error_http, monkeypatch, whitelist, expected_message):
+    """停用与白名单拒绝通过真实 HTTP 返回现有网页可展示的业务格式。"""
+    monkeypatch.setenv("YUXI_URL_WHITELIST", whitelist)
     response = await error_http.post("/api/knowledge/files/fetch-url", json={"url": "https://blocked.test"})
     assert response.status_code == 400, response.text
-    assert "Invalid URL" in response.json()["detail"]
+    assert response.json() == {"detail": {"code": "url_fetch_rejected", "message": expected_message}}
+
+
+async def test_url_parser_failure_hides_internal_detail(error_http, monkeypatch):
+    """可公开的校验拒绝也不能夹带底层 parser 异常正文。"""
+    from yuxi.modules.knowledge.utils import url_validator
+
+    monkeypatch.setenv("YUXI_URL_WHITELIST", "example.test")
+
+    def broken_parser(_url):
+        """以独立敏感标记模拟 URL parser 失败。"""
+        raise ValueError(PRIVATE_DETAIL)
+
+    monkeypatch.setattr(url_validator, "urlparse", broken_parser)
+    response = await error_http.post("/api/knowledge/files/fetch-url", json={"url": "https://example.test"})
+    assert response.status_code == 400 and PRIVATE_DETAIL not in response.text
+    assert response.json() == {"detail": {"code": "url_fetch_rejected", "message": "URL 校验失败：URL 格式不正确"}}

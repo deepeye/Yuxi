@@ -31,7 +31,327 @@
       <div class="login-card">
         <!-- 左侧图片 -->
         <div class="card-side is-image">
-          <img :src="loginBgImage" alt="登录背景" class="login-bg-image" />
+          <img
+            v-if="customLoginBg"
+            :src="customLoginBg"
+            alt="登录背景"
+            class="login-bg-image"
+            @error="handleLoginBgError"
+          />
+          <!-- 同一张植物插画通过局部色板适配主题，装饰不参与交互。 -->
+          <svg
+            v-else
+            class="login-bg-art"
+            viewBox="0 0 640 760"
+            preserveAspectRatio="xMidYMid slice"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <!-- 绘制属性随图元克隆，不依赖 <use> 实例树之外的祖先选择器。 -->
+            <defs>
+              <linearGradient id="login-paper" x2="0.8" y2="1">
+                <stop stop-color="var(--paper-light)" />
+                <stop offset="1" stop-color="var(--paper)" />
+              </linearGradient>
+              <radialGradient id="login-wash">
+                <stop stop-color="var(--wash)" stop-opacity="0.24" />
+                <stop offset="1" stop-color="var(--wash)" stop-opacity="0" />
+              </radialGradient>
+              <linearGradient id="login-wood" x1="0" y1="1" x2="1" y2="0">
+                <stop stop-color="var(--wood)" />
+                <stop offset="1" stop-color="var(--wood-light)" />
+              </linearGradient>
+              <linearGradient id="login-leaf" x1="0" y1="0.8" x2="0.9" y2="0.2">
+                <stop stop-color="var(--leaf-deep)" />
+                <stop offset="0.48" stop-color="var(--leaf)" />
+                <stop offset="1" stop-color="var(--leaf-light)" />
+              </linearGradient>
+              <radialGradient id="login-petal" cx="0.46" cy="0.94" r="0.92">
+                <stop stop-color="var(--petal-deep)" />
+                <stop offset="0.45" stop-color="var(--petal-mid)" />
+                <stop offset="1" stop-color="var(--petal)" />
+              </radialGradient>
+              <radialGradient id="login-heart">
+                <stop stop-color="var(--heart)" />
+                <stop offset="1" stop-color="var(--petal-deep)" stop-opacity="0" />
+              </radialGradient>
+              <filter id="login-paper-grain" x="0" y="0" width="100%" height="100%">
+                <feTurbulence
+                  type="fractalNoise"
+                  baseFrequency="0.72"
+                  numOctaves="3"
+                  stitchTiles="stitch"
+                />
+                <feColorMatrix type="saturate" values="0" />
+              </filter>
+              <g id="login-leaf-shape">
+                <path
+                  fill="url(#login-leaf)"
+                  stroke="var(--leaf-deep)"
+                  stroke-width="0.65"
+                  stroke-opacity="0.35"
+                  d="M0 0 C-15-18-35-57-17-101 C8-86 30-35 0 0Z"
+                />
+                <path
+                  fill="var(--leaf-deep)"
+                  opacity="0.12"
+                  d="M0 0 C-4-32-7-68-17-101 C8-86 30-35 0 0Z"
+                />
+                <path
+                  fill="none"
+                  stroke="var(--leaf-vein)"
+                  stroke-width="0.8"
+                  stroke-linecap="round"
+                  opacity="0.7"
+                  d="M0-3 C-5-33-7-66-16-96"
+                />
+                <path
+                  fill="none"
+                  stroke="var(--leaf-vein)"
+                  stroke-width="0.6"
+                  stroke-linecap="round"
+                  opacity="0.38"
+                  d="M-3-20 Q-13-24-18-35 M-5-36 Q-18-42-22-53 M-7-52 Q-20-59-22-69 M-10-69 Q-20-75-20-83 M-3-24 Q8-34 10-43 M-5-43 Q6-51 6-61 M-8-60 Q0-68-3-77"
+                />
+              </g>
+              <g id="login-petal-shape">
+                <path
+                  fill="url(#login-petal)"
+                  stroke="var(--petal-line)"
+                  stroke-width="0.65"
+                  stroke-opacity="0.35"
+                  d="M0 9 C-20-3-49-23-49-51 C-49-72-39-88-22-87 C-13-96-1-93 6-88 C24-94 44-79 43-60 C49-35 26-9 0 9Z"
+                />
+                <path
+                  fill="none"
+                  stroke="var(--petal-line)"
+                  stroke-width="0.65"
+                  stroke-linecap="round"
+                  opacity="0.18"
+                  d="M-3 1 C-13-21-29-39-30-66 M1-2 C-1-29 7-48 4-74 M5 0 C20-22 30-36 30-54"
+                />
+                <path
+                  fill="none"
+                  stroke="var(--petal-rim)"
+                  stroke-width="1.2"
+                  stroke-linecap="round"
+                  opacity="0.65"
+                  d="M-45-62 C-42-79-33-85-22-82 C-12-91-3-88 5-83"
+                />
+              </g>
+              <g id="login-stamen">
+                <path
+                  fill="none"
+                  stroke="var(--stamen)"
+                  stroke-width="0.85"
+                  stroke-linecap="round"
+                  d="M0 3 Q-5-11-2-26"
+                />
+                <ellipse
+                  fill="var(--pollen)"
+                  stroke="var(--stamen)"
+                  stroke-width="0.4"
+                  cx="-2"
+                  cy="-26"
+                  rx="2"
+                  ry="1.3"
+                  transform="rotate(-25 -2 -26)"
+                />
+              </g>
+              <g id="login-blossom">
+                <g opacity="0.93">
+                  <use href="#login-petal-shape" transform="rotate(4) scale(1 1.03)" />
+                  <use href="#login-petal-shape" transform="rotate(54) scale(0.94 1)" />
+                  <use href="#login-petal-shape" transform="rotate(105) scale(1.04 0.95)" />
+                  <use href="#login-petal-shape" transform="rotate(157) scale(0.98 1.06)" />
+                  <use href="#login-petal-shape" transform="rotate(208) scale(1.02 0.96)" />
+                  <use href="#login-petal-shape" transform="rotate(261) scale(0.96 1.03)" />
+                  <use href="#login-petal-shape" transform="rotate(311) scale(1 0.96)" />
+                </g>
+                <g transform="rotate(18) scale(0.68)">
+                  <use href="#login-petal-shape" />
+                  <use href="#login-petal-shape" transform="rotate(65) scale(0.94 1.04)" />
+                  <use href="#login-petal-shape" transform="rotate(127)" />
+                  <use href="#login-petal-shape" transform="rotate(190) scale(1.06 0.96)" />
+                  <use href="#login-petal-shape" transform="rotate(250)" />
+                  <use href="#login-petal-shape" transform="rotate(308) scale(0.94 1.06)" />
+                </g>
+                <circle r="27" fill="url(#login-heart)" />
+                <g transform="translate(0 2)">
+                  <use
+                    v-for="n in 22"
+                    :key="n"
+                    href="#login-stamen"
+                    :transform="`rotate(${n * 16.36}) scale(${0.78 + (n % 3) * 0.12})`"
+                  />
+                </g>
+                <g fill="var(--pollen)">
+                  <circle cx="-4" cy="-2" r="2" />
+                  <circle cx="3" cy="-4" r="2.4" />
+                  <circle cx="5" cy="3" r="1.8" />
+                  <circle cx="-1" cy="5" r="2.2" />
+                  <circle cx="-6" cy="4" r="1.4" />
+                </g>
+              </g>
+              <g id="login-bud">
+                <path
+                  fill="url(#login-petal)"
+                  stroke="var(--petal-line)"
+                  stroke-width="0.65"
+                  stroke-opacity="0.35"
+                  d="M0 4 C-26-11-21-37-7-48 C12-43 25-13 0 4Z"
+                />
+                <path
+                  fill="none"
+                  stroke="var(--petal-line)"
+                  stroke-width="0.65"
+                  stroke-linecap="round"
+                  opacity="0.18"
+                  d="M0 1 Q-12-24-7-44 M2 0 Q10-20 1-34"
+                />
+                <path
+                  fill="url(#login-leaf)"
+                  stroke="var(--leaf-deep)"
+                  stroke-width="0.65"
+                  stroke-opacity="0.35"
+                  d="M0 8 C-12 4-18-5-17-17 Q-5-11 0 0 Q8-12 13-15 C14-3 7 6 0 8Z"
+                />
+              </g>
+            </defs>
+
+            <rect width="640" height="760" fill="url(#login-paper)" />
+            <ellipse class="wash" cx="180" cy="560" rx="350" ry="420" fill="url(#login-wash)" />
+            <ellipse
+              class="wash wash--late"
+              cx="490"
+              cy="180"
+              rx="220"
+              ry="260"
+              fill="url(#login-wash)"
+              opacity="0.5"
+            />
+
+            <!-- 淡墨远枝与前景分开，留白处只保留很轻的层次。 -->
+            <g class="distant-sprig">
+              <path class="twig" d="M590 795 C519 641 506 545 553 430 M527 600 Q580 567 601 507" />
+              <use href="#login-leaf-shape" transform="translate(532 649) rotate(-42) scale(1.1)" />
+              <use href="#login-leaf-shape" transform="translate(521 575) rotate(37) scale(0.92)" />
+              <use
+                href="#login-leaf-shape"
+                transform="translate(532 497) rotate(-23) scale(0.78)"
+              />
+              <use href="#login-leaf-shape" transform="translate(565 566) rotate(60) scale(0.8)" />
+            </g>
+
+            <g class="bough">
+              <path
+                class="wood"
+                d="M150 796 C192 678 238 562 295 445 C331 374 363 278 418 210 L421 212 C367 287 339 378 302 449 C249 568 203 682 165 799Z"
+              />
+              <path
+                class="wood"
+                d="M300 448 C311 365 278 292 255 201 L258 200 C283 279 319 360 305 438Z M271 513 C369 518 440 457 483 366 L486 367 C449 461 375 524 268 520Z M241 590 C228 563 213 547 188 551 L188 548 C218 541 235 559 246 579Z"
+              />
+              <path
+                class="twig"
+                d="M358 315 C338 265 326 208 342 152 M385 267 Q422 286 450 274 M280 293 Q246 277 228 249"
+              />
+              <path
+                class="wood-grain"
+                d="M159 780 C201 659 248 545 298 449 M302 430 Q316 370 291 298 M302 517 Q414 502 462 415"
+              />
+
+              <g opacity="0.72">
+                <use
+                  href="#login-leaf-shape"
+                  transform="translate(181 718) rotate(-20) scale(0.85)"
+                />
+                <use
+                  href="#login-leaf-shape"
+                  transform="translate(280 500) rotate(29) scale(0.85)"
+                />
+                <use
+                  href="#login-leaf-shape"
+                  transform="translate(292 338) rotate(-65) scale(0.9)"
+                />
+                <use
+                  href="#login-leaf-shape"
+                  transform="translate(351 297) rotate(-10) scale(0.72)"
+                />
+                <use
+                  href="#login-leaf-shape"
+                  transform="translate(422 449) rotate(-23) scale(0.72)"
+                />
+              </g>
+              <use href="#login-leaf-shape" transform="translate(218 642) rotate(23) scale(1.12)" />
+              <use href="#login-leaf-shape" transform="translate(242 590) rotate(-53) scale(0.8)" />
+              <use
+                href="#login-leaf-shape"
+                transform="translate(306 440) rotate(-60) scale(0.98)"
+              />
+              <use href="#login-leaf-shape" transform="translate(370 474) rotate(58) scale(0.95)" />
+              <use href="#login-leaf-shape" transform="translate(280 294) rotate(40) scale(0.6)" />
+              <use
+                href="#login-leaf-shape"
+                transform="translate(228 249) rotate(-24) scale(0.34)"
+              />
+              <use href="#login-leaf-shape" transform="translate(377 268) rotate(67) scale(0.72)" />
+              <use href="#login-leaf-shape" transform="translate(450 274) rotate(72) scale(0.3)" />
+              <use
+                href="#login-leaf-shape"
+                transform="translate(405 229) rotate(-36) scale(0.64)"
+              />
+              <use href="#login-leaf-shape" transform="translate(477 388) rotate(56) scale(0.44)" />
+
+              <use href="#login-bud" transform="translate(257 201) rotate(-18) scale(0.57)" />
+              <use href="#login-bud" transform="translate(342 152) rotate(14) scale(0.36)" />
+              <use href="#login-bud" transform="translate(484 370) rotate(31) scale(0.66)" />
+              <g class="blossom blossom--late">
+                <use
+                  href="#login-blossom"
+                  transform="translate(417 215) rotate(-18) scale(0.58 0.51)"
+                />
+              </g>
+              <g transform="translate(190 552) rotate(-32) scale(0.64)">
+                <use href="#login-petal-shape" transform="rotate(-48) scale(0.7 0.8)" />
+                <use href="#login-petal-shape" transform="rotate(16) scale(0.72 0.88)" />
+                <use href="#login-petal-shape" transform="rotate(64) scale(0.65 0.72)" />
+                <path
+                  fill="url(#login-petal)"
+                  stroke="var(--petal-line)"
+                  stroke-width="0.65"
+                  stroke-opacity="0.35"
+                  d="M-46-31 C-28-38-11-29 0-20 C14-34 31-40 43-31 C38-2 18 15 0 20 C-20 12-39-4-46-31Z"
+                />
+                <path
+                  fill="none"
+                  stroke="var(--petal-line)"
+                  stroke-width="0.65"
+                  stroke-linecap="round"
+                  opacity="0.18"
+                  d="M-34-25 Q-22-2-4 12 M29-26 Q17-2 3 13"
+                />
+                <path
+                  fill="url(#login-leaf)"
+                  stroke="var(--leaf-deep)"
+                  stroke-width="0.65"
+                  stroke-opacity="0.35"
+                  d="M-21 7 Q-8 12 0 20 Q11 10 22 5 Q16 26 0 28 Q-15 23-21 7Z"
+                />
+              </g>
+              <g class="blossom">
+                <use href="#login-blossom" transform="translate(320 390) rotate(-12)" />
+              </g>
+            </g>
+
+            <g transform="translate(456 560) rotate(32)">
+              <path class="drift" d="M0 0 C-15-5-19-21-10-27 C5-30 14-11 0 0Z" />
+            </g>
+            <g transform="translate(387 640) rotate(-24)">
+              <path class="drift drift-late" d="M0 0 C-9-3-14-15-6-19 C6-19 10-6 0 0Z" />
+            </g>
+            <rect class="paper-grain" width="640" height="760" filter="url(#login-paper-grain)" />
+          </svg>
         </div>
 
         <!-- 右侧表单 -->
@@ -49,7 +369,13 @@
             <div class="login-content" :class="{ 'is-initializing': isFirstRun }">
               <!-- 初始化管理员表单 -->
               <div v-if="isFirstRun" class="login-form login-form--init">
-                <a-form :model="adminForm" @finish="handleInitialize" layout="vertical">
+                <a-form
+                  :model="adminForm"
+                  layout="vertical"
+                  validate-trigger="submit"
+                  @finish="handleInitialize"
+                  @finish-failed="handleFormInvalid"
+                >
                   <a-form-item
                     label="UID"
                     name="uid"
@@ -163,7 +489,13 @@
 
               <!-- 登录表单 -->
               <div v-else class="login-form">
-                <a-form :model="loginForm" @finish="handleLogin" layout="vertical">
+                <a-form
+                  :model="loginForm"
+                  layout="vertical"
+                  validate-trigger="submit"
+                  @finish="handleLogin"
+                  @finish-failed="handleFormInvalid"
+                >
                   <a-form-item
                     label="登录账号"
                     name="loginId"
@@ -254,11 +586,6 @@
                   </div>
                 </div>
               </div>
-
-              <!-- 错误提示 -->
-              <div v-if="errorMessage" class="error-message">
-                {{ errorMessage }}
-              </div>
             </div>
           </div>
         </div>
@@ -280,7 +607,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '@/modules/identity/model/user'
 import { useInfoStore } from '@/modules/settings/model/info'
@@ -303,10 +630,18 @@ const userStore = useUserStore()
 const infoStore = useInfoStore()
 const agentStore = useAgentStore()
 
-// 品牌展示数据
-const loginBgImage = computed(() => {
-  return infoStore.branding.login_bg || '/login-bg.jpg'
+// 历史默认图片不再随包提供；若部署者沿用同一路径配置图片，仍优先显示该图片。
+const STOCK_LOGIN_BG = '/login-bg.jpg'
+const legacyLoginBgMissing = ref(false)
+watch(() => infoStore.branding.login_bg, () => { legacyLoginBgMissing.value = false })
+const customLoginBg = computed(() => {
+  const value = infoStore.branding.login_bg?.trim() || ''
+  if (value === STOCK_LOGIN_BG && legacyLoginBgMissing.value) return ''
+  return value
 })
+const handleLoginBgError = () => {
+  if (customLoginBg.value === STOCK_LOGIN_BG) legacyLoginBgMissing.value = true
+}
 const brandLogo = computed(() => {
   return infoStore.branding.logo || ''
 })
@@ -324,7 +659,6 @@ const showAgreementConsent = computed(() => {
 // 状态
 const isFirstRun = ref(false)
 const loading = ref(false)
-const errorMessage = ref('')
 const agreementAccepted = ref(false)
 const serverStatus = ref('loading')
 const serverError = ref('')
@@ -378,7 +712,6 @@ const startLockCountdown = (remainingSeconds) => {
     if (lockRemainingTime.value <= 0) {
       clearLockCountdown()
       isLocked.value = false
-      errorMessage.value = ''
     }
   }, 1000)
 }
@@ -412,13 +745,26 @@ const validateConfirmPassword = async (rule, value) => {
   }
 }
 
+const showLoginError = (content) => {
+  const text = typeof content === 'string' ? content.trim() : ''
+  if (text) {
+    message.error(text)
+  }
+}
+
+const handleFormInvalid = ({ errorFields } = {}) => {
+  const errors = [
+    ...new Set((errorFields || []).flatMap((field) => field.errors || []).filter(Boolean))
+  ]
+  showLoginError(errors.join('；') || '请检查输入内容')
+}
+
 const ensureAgreementAccepted = () => {
   if (!showAgreementConsent.value || agreementAccepted.value) {
     return true
   }
 
-  const warningMessage = '请先阅读并同意《用户协议》《隐私协议》'
-  message.warning(warningMessage)
+  message.warning('请先阅读并同意《用户协议》《隐私协议》')
   return false
 }
 
@@ -436,7 +782,6 @@ const handleLogin = async () => {
 
   try {
     loading.value = true
-    errorMessage.value = ''
     clearLockCountdown()
 
     await userStore.login({
@@ -488,12 +833,12 @@ const handleLogin = async () => {
 
       if (remainingTime > 0) {
         startLockCountdown(remainingTime)
-        errorMessage.value = `由于多次登录失败，账户已被锁定 ${formatTime(remainingTime)}`
+        showLoginError(`由于多次登录失败，账户已被锁定 ${formatTime(remainingTime)}`)
       } else {
-        errorMessage.value = error.message || '账户被锁定，请稍后再试'
+        showLoginError(error.message || '账户被锁定，请稍后再试')
       }
     } else {
-      errorMessage.value = error.message || '登录失败，请检查用户名和密码'
+      showLoginError(error.message || '登录失败，请检查用户名和密码')
     }
   } finally {
     loading.value = false
@@ -508,7 +853,6 @@ const handleOIDCLogin = async () => {
 
   try {
     oidcLoading.value = true
-    errorMessage.value = ''
 
     // 获取 OIDC 登录 URL
     const response = await authApi.getOIDCLoginUrl()
@@ -521,11 +865,11 @@ const handleOIDCLogin = async () => {
       // 跳转到 OIDC Provider
       window.location.href = response.login_url
     } else {
-      errorMessage.value = '获取 OIDC 登录地址失败'
+      showLoginError('获取 OIDC 登录地址失败')
     }
   } catch (error) {
     console.error('OIDC 登录失败:', error)
-    errorMessage.value = error.message || 'OIDC 登录失败，请重试'
+    showLoginError(error.message || 'OIDC 登录失败，请重试')
   } finally {
     oidcLoading.value = false
   }
@@ -558,10 +902,9 @@ const handleInitialize = async () => {
 
   try {
     loading.value = true
-    errorMessage.value = ''
 
     if (adminForm.password !== adminForm.confirmPassword) {
-      errorMessage.value = '两次输入的密码不一致'
+      showLoginError('两次输入的密码不一致')
       return
     }
 
@@ -575,7 +918,7 @@ const handleInitialize = async () => {
     router.push('/')
   } catch (error) {
     console.error('初始化失败:', error)
-    errorMessage.value = error.message || '初始化失败，请重试'
+    showLoginError(error.message || '初始化失败，请重试')
   } finally {
     loading.value = false
   }
@@ -589,7 +932,7 @@ const checkFirstRunStatus = async () => {
     isFirstRun.value = isFirst
   } catch (error) {
     console.error('检查首次运行状态失败:', error)
-    errorMessage.value = '系统出错，请稍后重试'
+    showLoginError('系统出错，请稍后重试')
   } finally {
     loading.value = false
   }
@@ -625,7 +968,7 @@ onMounted(async () => {
 
   // 显示 OIDC 认证失败的错误信息（由后端重定向携带）
   if (route.query.oidc_error) {
-    errorMessage.value = String(route.query.oidc_error)
+    showLoginError(String(route.query.oidc_error))
   }
 
   // 首先检查服务器健康状态
@@ -662,8 +1005,11 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   background-color: var(--gray-10);
-  background-image: radial-gradient(var(--gray-200) 1px, transparent 1px);
-  background-size: 24px 24px;
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--gray-300) 40%, transparent) 0.7px,
+    transparent 0.8px
+  );
+  background-size: 28px 28px;
 
   &.has-alert {
     padding-top: 60px;
@@ -748,9 +1094,8 @@ onUnmounted(() => {
 
 .login-card {
   width: 900px;
-  max-width: 95vw;
-  /* 表单与错误信息决定卡片高度，避免居中内容被圆角裁切。 */
-  min-height: 560px;
+  height: 560px;
+  flex: 0 0 auto;
   background: var(--gray-0);
   border-radius: 16px;
   border: 1px solid var(--border-surface);
@@ -769,18 +1114,186 @@ onUnmounted(() => {
 /* Image Side */
 .card-side.is-image {
   flex: 1.4;
-  background-color: var(--main-10);
+  background-color: var(--gray-0);
   border-right: 1px solid var(--border-surface);
   overflow: hidden;
 
-  .login-bg-image {
+  .login-bg-image,
+  .login-bg-art {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
+  }
+
+  .login-bg-image {
     object-fit: cover;
     object-position: center;
   }
+
+  .login-bg-art {
+    display: block;
+    pointer-events: none;
+    --paper-light: #fffefa;
+    --paper: #faf8f0;
+    --wash: #ebeddf;
+    --wood: #726751;
+    --wood-light: #a29577;
+    --leaf: #819782;
+    --leaf-light: #b2bba1;
+    --leaf-deep: #526e61;
+    --leaf-vein: #e1e3c9;
+    --petal: #fff7f0;
+    --petal-mid: #f0cfc6;
+    --petal-deep: #d99c98;
+    --petal-line: #c18e8a;
+    --petal-rim: #fffaf4;
+    --heart: #ad7370;
+    --stamen: #ab874b;
+    --pollen: #d9b96d;
+  }
+
+  .wood {
+    fill: url(#login-wood);
+  }
+
+  .twig,
+  .wood-grain {
+    fill: none;
+    stroke-linecap: round;
+  }
+
+  .twig {
+    stroke: var(--wood-light);
+    stroke-width: 1.7;
+  }
+
+  .wood-grain {
+    stroke: var(--paper-light);
+    stroke-width: 0.8;
+    opacity: 0.3;
+  }
+
+  .distant-sprig {
+    opacity: 0.075;
+  }
+
+  .paper-grain {
+    opacity: 0.02;
+    mix-blend-mode: multiply;
+  }
+
+  /* 背景光斑极慢漂移，只做明暗呼吸，不改变画面重心。 */
+  .wash {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: login-wash-breathe 26s ease-in-out infinite alternate;
+  }
+
+  .wash--late {
+    animation-duration: 34s;
+    animation-delay: -13s;
+  }
+
+  /* 花朵随枝干摆动之外再轻微开合，幅度低于视觉可辨识的形变阈值。 */
+  .blossom {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: login-blossom-breathe 11s ease-in-out infinite alternate;
+  }
+
+  .blossom--late {
+    animation-delay: -5.5s;
+  }
+
+  .bough {
+    transform-box: view-box;
+    transform-origin: 158px 790px;
+    animation: login-bough-sway 18s ease-in-out infinite alternate;
+  }
+
+  .drift {
+    fill: url(#login-petal);
+    opacity: 0.6;
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: login-petal-drift 22s ease-in-out infinite;
+  }
+
+  .drift-late {
+    animation-delay: -11s;
+  }
+}
+
+@keyframes login-bough-sway {
+  from {
+    transform: rotate(-0.45deg);
+  }
+  to {
+    transform: rotate(0.55deg);
+  }
+}
+
+@keyframes login-petal-drift {
+  0% {
+    transform: translate(0, -8px) rotate(-6deg);
+    opacity: 0;
+  }
+  25%,
+  65% {
+    opacity: 0.6;
+  }
+  100% {
+    transform: translate(12px, 24px) rotate(18deg);
+    opacity: 0;
+  }
+}
+
+@keyframes login-wash-breathe {
+  from {
+    transform: translate(-6px, 4px) scale(1);
+  }
+  to {
+    transform: translate(8px, -6px) scale(1.04);
+  }
+}
+
+@keyframes login-blossom-breathe {
+  from {
+    transform: rotate(-0.35deg) scale(1);
+  }
+  to {
+    transform: rotate(0.35deg) scale(1.012);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-side.is-image .bough,
+  .card-side.is-image .drift,
+  .card-side.is-image .wash,
+  .card-side.is-image .blossom {
+    animation: none;
+  }
+}
+
+:global(:root.dark .card-side.is-image .login-bg-art) {
+  --paper-light: #242d2a;
+  --paper: #1b2422;
+  --wash: #59664e;
+  --wood: #8c8970;
+  --wood-light: #b4b096;
+  --leaf: #7f9481;
+  --leaf-light: #a5b097;
+  --leaf-deep: #4e695d;
+  --leaf-vein: #d1d7ba;
+  --petal: #e5d5ca;
+  --petal-mid: #c7a19a;
+  --petal-deep: #a77072;
+  --petal-line: #8f6869;
+  --petal-rim: #f2e3d5;
+  --heart: #885a60;
+  --stamen: #b59a64;
+  --pollen: #dcc28a;
 }
 
 /* Form Side */
@@ -825,6 +1338,11 @@ onUnmounted(() => {
 }
 
 .login-form {
+  /* 校验文案由 Message 展示，避免表单项说明撑开固定高度的卡片。 */
+  :deep(.ant-form-item-explain) {
+    display: none !important;
+  }
+
   :deep(.ant-input-affix-wrapper) {
     padding: 10px 14px;
     border-radius: 8px;
@@ -951,17 +1469,6 @@ onUnmounted(() => {
   }
 }
 
-.error-message {
-  margin-top: 16px;
-  padding: 10px 12px;
-  background-color: var(--color-error-50);
-  border: 1px solid color-mix(in srgb, var(--color-error-500) 25%, transparent);
-  border-radius: 8px;
-  color: var(--color-error-700);
-  font-size: 13px;
-  text-align: center;
-}
-
 /* Page Footer */
 .page-footer {
   padding: 24px;
@@ -1071,9 +1578,6 @@ onUnmounted(() => {
 
   .login-card {
     flex-direction: column;
-    /* 纵向单列时卡片随内容收缩，不沿用双栏的最小高度 */
-    min-height: unset;
-    width: 100%;
     margin-top: 20px;
   }
 

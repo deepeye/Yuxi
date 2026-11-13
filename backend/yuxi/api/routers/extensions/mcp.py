@@ -7,20 +7,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.api.dependencies.auth import get_db, get_required_user, get_superadmin_user
 from yuxi.api.routers.extensions.mcp_oauth import router as oauth_router
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.extensions.mcp.oauth_config import PERSONAL_AUTH_MODES, STATIC_AUTH_MODES, config_revision
 from yuxi.modules.extensions.mcp.repository import get_all_mcp_servers, get_mcp_server
 from yuxi.modules.extensions.mcp.service import (
     MCPServerNotFoundError,
+    available_mcp_servers,
     create_mcp_server,
     delete_mcp_server,
     get_all_mcp_tools,
     inspect_mcp_server_tools,
     is_builtin_mcp_server,
     personal_connection_states,
+    runtime_mcp_failure,
     set_server_enabled,
     toggle_tool_enabled,
     update_mcp_server,
 )
 from yuxi.modules.identity.models import User
+from yuxi.shared.errors import DomainError
 
 mcp = APIRouter(prefix="/system/mcp-servers", tags=["mcp"])
 mcp.include_router(oauth_router)
@@ -34,6 +38,7 @@ class CreateMcpServerRequest(BaseModel):
 
     auth_mode: str = "headers"
     oauth_config: dict | None = None
+    api_key_header: str | None = None
     slug: str = Field(..., description="稳定标识")
     name: str = Field(..., description="展示名称")
     transport: str = Field(..., description="传输类型：sse/streamable_http")
@@ -49,6 +54,7 @@ class UpdateMcpServerRequest(BaseModel):
 
     auth_mode: str | None = None
     oauth_config: dict | None = None
+    api_key_header: str | None = None
 
     name: str | None = Field(None, description="展示名称")
     transport: str | None = Field(None, description="传输类型")
@@ -75,25 +81,36 @@ async def get_mcp_servers(
     try:
         servers = await get_all_mcp_servers(db)
         states = await personal_connection_states(db, servers, current_user.id)
+        available = await available_mcp_servers(db, [server.slug for server in servers], user_id=current_user.id)
         if current_user.role == "superadmin":
             return {
                 "success": True,
-                "data": [{**serialize_mcp_server(server), "connection_status": states[server.slug]} for server in servers],
+                "data": [
+                    {**serialize_mcp_server(server), "connection_status": states[server.slug], "available": server.slug in available}
+                    for server in servers
+                ],
             }
 
         data = []
         for server in servers:
-            if not server.enabled:
+            if not server.enabled and states[server.slug] not in {"connected", "reconnect_required"}:
                 continue
             data.append(
                 {
                     "slug": server.slug,
                     "auth_mode": server.auth_mode,
+                    **(
+                        {"config_revision": config_revision(server), "api_key_header": server.api_key_header}
+                        if server.auth_mode in STATIC_AUTH_MODES
+                        else {}
+                    ),
                     "connection_status": states[server.slug],
+                    "available": server.slug in available,
                     "can_manage": False,
                     "name": getattr(server, "name", ""),
                     "description": getattr(server, "description", None),
                     "enabled": bool(getattr(server, "enabled", True)),
+                    "is_builtin": is_builtin_mcp_server(server),
                 }
             )
         return {"success": True, "data": data}
@@ -133,10 +150,11 @@ async def create_mcp_server_route(
             created_by=current_user.username,
             auth_mode=request.auth_mode,
             oauth_config=request.oauth_config,
+            api_key_header=request.api_key_header,
         )
         return {"success": True, "data": serialize_mcp_server(server)}
     except ValueError:
-        raise HTTPException(status_code=400, detail="MCP 配置无效，请检查地址、认证方式和必填字段")
+        raise HTTPException(status_code=400, detail="连接器配置无效，请检查地址、认证方式和必填字段")
     except HTTPException:
         raise
     except Exception as e:
@@ -188,6 +206,7 @@ async def update_mcp_server_route(
             updated_by=current_user.username,
             auth_mode=request.auth_mode,
             oauth_config=request.oauth_config,
+            api_key_header=request.api_key_header,
         )
         return {"success": True, "data": serialize_mcp_server(server)}
     except HTTPException:
@@ -197,7 +216,7 @@ async def update_mcp_server_route(
     except PermissionError as pe:
         raise HTTPException(status_code=403, detail=str(pe))
     except ValueError:
-        raise HTTPException(status_code=400, detail="MCP 配置无效，请检查地址、认证方式和必填字段")
+        raise HTTPException(status_code=400, detail="连接器配置无效，请检查地址、认证方式和必填字段")
     except Exception as e:
         logger.error(f"Failed to update MCP server: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -213,7 +232,7 @@ async def delete_mcp_server_route(
     try:
         server = await get_mcp_server(db, slug)
         if server and is_builtin_mcp_server(server):
-            raise HTTPException(status_code=403, detail="系统内置的 MCP 服务器无法删除")
+            raise HTTPException(status_code=403, detail="系统内置的连接器无法删除")
 
         deleted = await delete_mcp_server(db, slug)
         if not deleted:
@@ -232,12 +251,14 @@ async def delete_mcp_server_route(
 @mcp.post("/{slug}/test")
 async def test_mcp_server(
     slug: str,
-    current_user: User = Depends(get_superadmin_user),
+    current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     """测试 MCP 服务器连接"""
     try:
         server = await get_server_or_404(db, slug)
+        if server.auth_mode not in PERSONAL_AUTH_MODES and current_user.role != "superadmin":
+            raise HTTPException(status_code=403, detail="只有超级管理员可以测试共享或内置服务")
         try:
             tools = await inspect_mcp_server_tools(server, uid=current_user.uid)
             return {
@@ -247,9 +268,13 @@ async def test_mcp_server(
             }
         except HTTPException:
             raise
-        except Exception:
-            raise HTTPException(status_code=502, detail="MCP 连接失败，请检查服务地址、凭据和网络后重试") from None
-    except HTTPException:
+        except Exception as exc:
+            detail = "连接器连接失败，请检查服务地址、凭据和网络后重试"
+            if server.auth_mode in PERSONAL_AUTH_MODES:
+                reason, _ = runtime_mcp_failure(exc)
+                detail = {"code": "mcp_connection_failed", "message": reason}
+            raise HTTPException(status_code=502, detail=detail) from None
+    except (HTTPException, DomainError):
         raise
     except Exception as e:
         logger.error(f"Failed to test MCP server: {e}")
@@ -270,12 +295,12 @@ async def update_mcp_server_status_route(
             "success": True,
             "enabled": is_enabled,
             "data": serialize_mcp_server(server),
-            "message": f"MCP '{slug}' 已{'添加' if is_enabled else '移除'}",
+            "message": f"连接器 '{slug}' 已{'添加' if is_enabled else '移除'}",
         }
     except MCPServerNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError:
-        raise HTTPException(status_code=400, detail="MCP 配置无效，请检查地址、认证方式和必填字段")
+        raise HTTPException(status_code=400, detail="连接器配置无效，请检查地址、认证方式和必填字段")
     except HTTPException:
         raise
     except Exception as e:
@@ -356,7 +381,7 @@ async def toggle_mcp_server_tool_route(
             "message": f"工具 '{tool_name}' 已{'启用' if enabled else '禁用'}",
         }
     except ValueError:
-        raise HTTPException(status_code=404, detail="MCP 配置无效，请检查地址、认证方式和必填字段")
+        raise HTTPException(status_code=404, detail="连接器配置无效，请检查地址、认证方式和必填字段")
     except HTTPException:
         raise
     except Exception as e:
@@ -375,6 +400,8 @@ async def get_server_or_404(db: AsyncSession, slug: str):
 def serialize_mcp_server(server) -> dict:
     """序列化 MCP，并补充代码内置标识。"""
     data = server.to_dict()
+    if data.get("auth_mode") in STATIC_AUTH_MODES:
+        data["config_revision"] = config_revision(server)
     data["can_manage"] = True
     data["is_builtin"] = is_builtin_mcp_server(server)
     return data

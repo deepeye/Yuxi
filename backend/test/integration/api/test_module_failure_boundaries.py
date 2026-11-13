@@ -97,7 +97,7 @@ async def test_builtin_mcp_delete_preserves_postgres_row(test_client, admin_head
         response = await test_client.delete(f"/api/system/mcp-servers/{slug}", headers=admin_headers)
         assert response.status_code == 403, response.text
         async with async_sessionmaker(engine)() as db:
-            with pytest.raises(PermissionError, match="内置 MCP"):
+            with pytest.raises(PermissionError, match="内置连接器"):
                 await delete_mcp_server(db, slug)
         assert await conn.fetchrow("SELECT * FROM mcp_servers WHERE slug = $1", slug) == before
     finally:
@@ -153,7 +153,16 @@ async def test_dify_http_failure_export_and_result_boundaries(test_client, admin
         assert response.status_code == 501, response.text
         assert response.json()["detail"] == "知识库导出暂不支持"
 
-        payload = {"query": "fixture query", "meta": {"final_top_k": 1000000}}
+        rejected = await test_client.post(
+            path + "/query-test",
+            headers=admin_headers,
+            json={"query": "fixture query", "meta": {"final_top_k": 1000000}},
+        )
+        assert rejected.status_code == 422, rejected.text
+        assert "超出允许范围" in rejected.json()["detail"]
+        assert requests == []
+
+        payload = {"query": "fixture query", "meta": {"final_top_k": 100}}
         response = await test_client.post(path + "/query-test", headers=admin_headers, json=payload)
         if remote_fails:
             assert response.status_code == 500, response.text

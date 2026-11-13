@@ -5,14 +5,14 @@
       <div class="dashboard-card-metric-grid">
         <DashboardMetricCard
           :icon="Database"
-          :value="formatNumber(knowledgeStats?.total_knowledge_bases)"
+          :value="formatStatNumber(knowledgeStats, knowledgeStats?.total_knowledge_bases)"
           label="知识库总数"
           tone="info"
           compact
         />
         <DashboardMetricCard
           :icon="FileText"
-          :value="formatNumber(knowledgeStats?.total_files)"
+          :value="formatStatNumber(knowledgeStats, knowledgeStats?.total_files)"
           label="文件总数"
           tone="success"
           compact
@@ -20,7 +20,7 @@
         <DashboardMetricCard
           :icon="HardDrive"
           :value="formattedStorage.value"
-          :label="`存储容量 (${formattedStorage.unit})`"
+          :label="knowledgeStats ? `存储容量 (${formattedStorage.unit})` : '存储容量'"
           tone="warning"
           compact
         />
@@ -39,7 +39,7 @@
         </div>
         <ul
           class="file-type-legend"
-          :class="{ 'legend-two-columns': fileTypeData.length >= 5 }"
+          :class="{ 'legend-many-types': fileTypeData.length >= 5 }"
           aria-label="文件类型数量与占比"
         >
           <li
@@ -59,7 +59,10 @@
           </li>
         </ul>
       </template>
-      <a-empty v-else description="暂无文件类型数据" />
+      <a-empty
+        v-else
+        :description="knowledgeStats ? '暂无文件类型数据' : '知识库统计暂不可用'"
+      />
     </div>
   </DashboardChartCard>
 </template>
@@ -70,7 +73,7 @@ import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import * as echarts from '@/modules/dashboard/model/dashboardCharts'
 import { getColorByIndex, getColorPalette } from '@/shared/lib/chartColors'
 import { useThemeStore } from '@/shared/model/theme'
-import { formatNumber, formatStorageSize } from '@/modules/dashboard/model/dashboard'
+import { formatStatNumber, formatStorageSize } from '@/modules/dashboard/model/dashboard'
 import { Database, FileText, HardDrive } from '@lucide/vue'
 import DashboardMetricCard from './DashboardMetricCard.vue'
 
@@ -82,7 +85,11 @@ const themeStore = useThemeStore()
 const fileTypeChartRef = ref(null)
 let fileTypeChart = null
 let resizeObserver = null
-const formattedStorage = computed(() => formatStorageSize(props.knowledgeStats?.total_storage_size))
+const formattedStorage = computed(() =>
+  props.knowledgeStats
+    ? formatStorageSize(props.knowledgeStats.total_storage_size)
+    : { value: '—', unit: '—' }
+)
 const fileTypeData = computed(() =>
   Object.entries(props.knowledgeStats?.file_type_distribution || {})
     .map(([name, value]) => ({ name: name || '未知', value: Number(value) }))
@@ -143,6 +150,10 @@ defineExpose({ cleanup })
 </script>
 
 <style scoped lang="less">
+.file-distribution {
+  // 图例列数由卡片自身宽度决定，避免窄卡片里名称、数量与占比互相挤压。
+  container-type: inline-size;
+}
 .file-distribution h4,
 .legend-value {
   color: var(--color-text);
@@ -185,39 +196,17 @@ defineExpose({ cleanup })
     border-bottom: 1px solid var(--gray-100);
     font-size: 13px;
   }
-  // 类型较多时拆成两列；用 grid 而非多列分栏，避免分栏布局挤压内部名称列导致折行
-  &.legend-two-columns {
+  // 类型较多时默认单列；容器足够宽时再拆两列，每个类型保持在一条明细内。
+  &.legend-many-types {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+}
+@container (min-width: 400px) {
+  .file-type-legend.legend-many-types {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     column-gap: 20px;
-    align-items: start;
-
-    // 两列时单列宽度有限：名称独占一行，数值与占比另起一行，避免名称被截断
-    li {
-      grid-template-columns: 8px minmax(0, 1fr);
-      grid-template-areas:
-        'swatch name'
-        '.      stats';
-      row-gap: 2px;
-      column-gap: 8px;
-
-      .legend-swatch {
-        grid-area: swatch;
-      }
-
-      .legend-name {
-        grid-area: name;
-      }
-
-      .legend-value,
-      .legend-percent {
-        grid-area: stats;
-      }
-
-      .legend-value {
-        display: none;
-      }
-    }
   }
 }
 .legend-swatch {

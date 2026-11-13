@@ -770,6 +770,7 @@ import { getMessageRunId } from '@/modules/session/model/messageDebug'
 import { MessageProcessor } from '@/modules/session/model/messageProcessor'
 import dayjs, { parseToShanghai } from '@/shared/lib/time'
 import { agentApi, threadApi } from '@/apis'
+import { mcpApi } from '@/apis/mcp_api'
 import HumanApprovalModal from '@/modules/session/ui/HumanApprovalModal.vue'
 import { useApproval } from '@/modules/session/model/useApproval'
 import { IDLE_QUEUE_SNAPSHOT } from '@/modules/session/model/useAgentThreadState'
@@ -1314,10 +1315,10 @@ const currentAgentName = computed(() => {
 })
 
 const currentAgent = computed(() => {
-  if (!currentAgentId.value || !agents.value || !agents.value.length) return null
+  if (!currentAgentId.value) return null
   return (
     agentDetails.value[currentAgentId.value] ||
-    agents.value.find((agent) => agent.agent_id === currentAgentId.value) ||
+    agents.value?.find((agent) => agent.agent_id === currentAgentId.value) ||
     null
   )
 })
@@ -1548,7 +1549,10 @@ const sessionLinkNavigator = createSessionLinkNavigator({
   router,
   resolveTarget: (target) => agentApi.getSessionNavigation(target),
   isActive: () => workspaceActive.value,
-  openTarget(destination) {
+  openTarget(destination, { restore }) {
+    if (restore && (destination.tree_root_session_id !== currentChatId.value || !destination.parent_session_id)) {
+      throw new Error('会话不属于当前主页面')
+    }
     if (destination.tree_root_session_id === currentChatId.value) {
       if (destination.parent_session_id) openCooperationSession(destination.session_id, destination.name)
       else if (isAgentPanelMaximized.value) agentPanelActiveSectionKey.value = 'main-session'
@@ -1569,17 +1573,14 @@ async function navigateToSession(target) {
 /** 路由恢复先校验成员属于当前根页面，再打开侧栏。 */
 async function openSessionFromRoute(sessionId) {
   if (!sessionId) {
+    sessionLinkNavigator.invalidate()
     if (isAgentPanelMaximized.value) agentPanelActiveSectionKey.value = 'main-session'
     else if (agentPanelSections.value.find((section) => section.key === agentPanelActiveSectionKey.value)?.type === 'session') {
       isFilePanelOpen.value = false
     }
     return
   }
-  const target = await agentApi.getSessionNavigation(sessionId)
-  if (target.tree_root_session_id !== currentChatId.value || !target.parent_session_id) {
-    throw new Error('会话不属于当前主页面')
-  }
-  openCooperationSession(target.session_id, target.name)
+  await sessionLinkNavigator.navigate(sessionId, { restore: true })
 }
 
 const openCooperationSession = (sessionId, title) => {
@@ -1667,11 +1668,24 @@ const hasVisibleStateSections = computed(
     cooperationSessions.value.length > 1
 )
 
+const mentionMcpServers = ref([])
+watch(workspaceActive, async (active) => {
+  if (!active) return
+  try {
+    const result = await mcpApi.getMcpServers()
+    mentionMcpServers.value = result.data || []
+  } catch {
+    mentionMcpServers.value = []
+    message.error('连接器列表加载失败，请重新打开对话重试')
+  }
+}, { immediate: true })
+
 const { mentionConfig } = useAgentMentionConfig({
   agents,
   currentThreadAttachments,
   configurableItems,
-  agentConfig
+  agentConfig,
+  mcpServers: mentionMcpServers
 })
 
 const currentThreadMessages = computed(() => threadMessages.value[currentChatId.value] || [])
@@ -1873,19 +1887,32 @@ const isWaitingForUserAction = computed(() =>
   isThreadWaitingForUserAction(currentThreadState.value)
 )
 const queuePausedMessage = '后续队列已暂停。发送新消息将优先处理并继续队列。'
+const hasDraftContent = computed(
+  () => Boolean(String(userInput.value || '').trim() || agentInputAreaRef.value?.hasImages)
+)
 const shouldShowStopButton = computed(
   () =>
     (isStreaming.value || currentThreadState.value?.cooperationWaiting) &&
-    !String(userInput.value || '').trim()
+    !hasDraftContent.value
+)
+const inputSubmissionBlocked = computed(
+  () =>
+    !agentExecutionAvailable.value ||
+    props.sendDisabled ||
+    sendCooldownActive.value ||
+    isLoadingMessages.value ||
+    isWaitingForUserAction.value ||
+    !!pendingSends.value[currentChatId.value] ||
+    Boolean(currentThreadState.value?.cancellationPending)
 )
 const canSubmitSteer = computed(
   () =>
-    agentExecutionAvailable.value &&
+    !inputSubmissionBlocked.value &&
     isStreaming.value &&
+    Boolean(currentThreadState.value?.activeRunId) &&
+    !currentThreadState.value?.cooperationWaiting &&
     currentThreadState.value?.activeRunSteerable === true &&
-    (Boolean(String(userInput.value || '').trim()) || agentInputAreaRef.value?.hasImages) &&
-    !sendCooldownActive.value &&
-    !isWaitingForUserAction.value
+    hasDraftContent.value
 )
 const canCancelQueuedInput = (input) => input?.status !== 'sending'
 const canPromoteQueuedInput = (input) =>
@@ -1948,18 +1975,9 @@ const replyLoadingText = computed(() => {
     return `排队中（${queuedInputCount.value} 条）...`
   return '正在生成回复...'
 })
-const isSendButtonDisabled = computed(() => {
-  if (currentThreadState.value?.cancellationPending) return true
-  return (
-    sendCooldownActive.value ||
-    props.sendDisabled ||
-    isLoadingMessages.value ||
-    isWaitingForUserAction.value ||
-    !!pendingSends.value[currentChatId.value] ||
-    (!userInput.value && !isProcessing.value) ||
-    !agentExecutionAvailable.value
-  )
-})
+const isSendButtonDisabled = computed(
+  () => inputSubmissionBlocked.value || (!hasDraftContent.value && !isProcessing.value)
+)
 
 const startSendCooldown = () => {
   sendCooldownActive.value = true
@@ -2184,6 +2202,7 @@ const loadEarlierMessages = async () => {
 
 const handleWorkspaceScroll = () => {
   if (!workspaceActive.value) return
+  if (scrollController.hasLayoutChanged()) return
   const scrollTop = chatMainRef.value?.scrollTop || 0
   const scrollingUp = scrollTop < retainedScrollTop
   retainedScrollTop = scrollTop
@@ -2261,17 +2280,26 @@ const startChatMainResizeObserver = () => {
     if (!isResizeObserverReady) return
 
     if (!entries.length) return
+    if (!earlierMessagesLoading.value) {
+      scrollController.handleResize()
+      retainedScrollTop = chatMainRef.value?.scrollTop || 0
+    }
     syncLayoutMetrics()
   })
   if (panelWrapperRef.value) chatMainResizeObserver.observe(panelWrapperRef.value)
   chatMainResizeObserver.observe(chatMainRef.value)
+  const chatBox = chatMainRef.value.querySelector('.chat-box')
+  if (chatBox) chatMainResizeObserver.observe(chatBox)
   if (chatContentContainerRef.value) {
     chatMainResizeObserver.observe(chatContentContainerRef.value)
   }
   if (messageInputDockRef.value) {
     chatMainResizeObserver.observe(messageInputDockRef.value)
   }
-  armResizeObserver(syncLayoutMetrics)
+  armResizeObserver(() => {
+    scrollController.rememberReadingPosition()
+    syncLayoutMetrics()
+  })
 }
 
 onMounted(() => {
@@ -2631,8 +2659,10 @@ const selectChat = async (chatId) => {
 
 const selectThreadFromRoute = async (threadId) => {
   if (threadCreationInFlight.value) return null
+  const initiatingUserId = userStore.userId
   if (!agentStore.isInitialized) {
     await initAll()
+    if (userStore.userId !== initiatingUserId) return null
   }
 
   if (!threadId) {
@@ -2646,8 +2676,11 @@ const selectThreadFromRoute = async (threadId) => {
   const loadedCurrentThread = currentThreadId.value === threadId && getThreadState(threadId).historyLoaded
   if (loadedCurrentThread || !threads.value.some((thread) => thread.id === threadId)) {
     try {
-      chatThreadsStore.upsertThread(await agentApi.getPublicThread(threadId))
+      const thread = await agentApi.getPublicThread(threadId)
+      if (userStore.userId !== initiatingUserId) return null
+      chatThreadsStore.upsertThread(thread)
     } catch (error) {
+      if (userStore.userId !== initiatingUserId) return null
       handleChatError(error, 'load')
       return [403, 404, 410].includes(error?.status) ? false : null
     }
@@ -3005,6 +3038,7 @@ const toggleStatePanel = async () => {
 }
 
 const closeFilePanel = () => {
+  sessionLinkNavigator.invalidate()
   isFilePanelOpen.value = false
   isAgentPanelMaximized.value = false
   filePanelDragWidth.value = null
@@ -3138,14 +3172,21 @@ const getMessageGroupSources = (group) => {
 
 // ==================== LIFECYCLE & WATCHERS ====================
 const loadChatsList = async () => {
+  const initiatingUserId = userStore.userId
   try {
     await fetchThreads()
+    if (userStore.userId !== initiatingUserId) return
 
     // 首页缺席不代表删除；当前会话可能位于后续分页。
     if (currentThreadId.value && !threads.value.find((t) => t.id === currentThreadId.value)) {
-      chatThreadsStore.upsertThread(await agentApi.getPublicThread(currentThreadId.value))
+      const threadId = currentThreadId.value
+      const thread = await agentApi.getPublicThread(threadId)
+      if (userStore.userId === initiatingUserId && currentThreadId.value === threadId) {
+        chatThreadsStore.upsertThread(thread)
+      }
     }
   } catch (error) {
+    if (userStore.userId !== initiatingUserId) return
     handleChatError(error, 'load')
   }
 }
@@ -3386,6 +3427,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
   display: flex;
   flex-direction: column;
   overflow-y: auto; /* Scroll is here now */
+  overflow-anchor: none; /* 阅读位置由会话滚动控制器补偿。 */
   position: relative;
   transition:
     flex-basis 0.3s cubic-bezier(0.4, 0, 0.2, 1),
@@ -3395,10 +3437,6 @@ watch(currentChatId, (threadId, oldThreadId) => {
   min-width: 0; /* Prevent flex item from overflowing */
 
   scrollbar-width: none;
-}
-
-.chat-main.is-loading-history {
-  overflow-anchor: none; /* 追加期间由视图补偿阅读位置，避免浏览器重复锚定。 */
 }
 
 .chat-content-container.has-file-panel .chat-main {

@@ -2,10 +2,13 @@
 
 import ipaddress
 import socket
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpcore
 import httpx
 import pytest
+
 from yuxi.modules.knowledge.utils import url_fetcher
 from yuxi.modules.knowledge.utils.url_fetcher import (
     SSRFGuardBackend,
@@ -13,6 +16,8 @@ from yuxi.modules.knowledge.utils.url_fetcher import (
     is_blocked_address,
     resolve_hostname_addresses,
 )
+from yuxi.modules.knowledge.utils.url_validator import validate_url
+from yuxi.shared.errors import InvalidOperationError
 
 
 class RecordingBackend(httpcore.AsyncNetworkBackend):
@@ -97,13 +102,22 @@ async def test_resolve_fails_closed_on_empty_result(monkeypatch):
         "::1",
         "fc00::1",
         "fd00:ec2::254",
+        "224.0.0.1",
+        "ff02::1",
+        "::ffff:224.0.0.1",
+        "::ffff:10.0.0.5",
+        "::ffff:100.100.200.200",
+        "::ffff:169.254.169.254",
     ],
 )
 def test_is_blocked_address_rejects_non_public(address):
     assert is_blocked_address(ipaddress.ip_address(address)) is True
 
 
-@pytest.mark.parametrize("address", ["93.184.216.34", "8.8.8.8", "2606:2800:220:1:248:1893:25c8:1946"])
+@pytest.mark.parametrize(
+    "address",
+    ["93.184.216.34", "8.8.8.8", "2606:2800:220:1:248:1893:25c8:1946", "::ffff:8.8.8.8"],
+)
 def test_is_blocked_address_allows_public(address):
     assert is_blocked_address(ipaddress.ip_address(address)) is False
 
@@ -113,6 +127,17 @@ def test_assert_no_blocked_address_reports_offender():
         assert_no_blocked_address([ipaddress.ip_address("93.184.216.34"), ipaddress.ip_address("10.0.0.5")])
 
 
+async def test_mapped_metadata_rejected_even_if_ipv6_address_claims_global(monkeypatch, recording_backend):
+    """模拟 Python 3.12 的映射地址判断，元数据地址仍不能建连。"""
+    monkeypatch.setattr(ipaddress.IPv6Address, "is_global", property(lambda self: True))
+    _patch_getaddrinfo(monkeypatch, _addr_infos("::ffff:100.100.200.200"))
+    guard = SSRFGuardBackend(recording_backend)
+
+    with pytest.raises(ValueError, match="private IP"):
+        await guard.connect_tcp("example.com", 443)
+    assert recording_backend.calls == []
+
+
 @pytest.mark.parametrize(
     ("resolution", "fail_hosts", "timeout", "expected_error", "expected_calls"),
     [
@@ -120,6 +145,9 @@ def test_assert_no_blocked_address_reports_offender():
         pytest.param(_addr_infos("10.0.0.5"), set(), None, (ValueError, "private IP"), [], id="private-address"),
         pytest.param(socket.gaierror("boom"), set(), None, (ValueError, "DNS resolution failed"), [], id="dns-error"),
         pytest.param(_addr_infos("169.254.169.254"), set(), None, (ValueError, "private IP"), [], id="metadata-address"),
+        pytest.param(_addr_infos("224.0.0.1"), set(), None, (ValueError, "private IP"), [], id="multicast-address"),
+        pytest.param(_addr_infos("ff02::1"), set(), None, (ValueError, "private IP"), [], id="ipv6-multicast-address"),
+        pytest.param(_addr_infos("::ffff:224.0.0.1"), set(), None, (ValueError, "private IP"), [], id="mapped-multicast-address"),
         pytest.param(
             _addr_infos("93.184.216.34", "8.8.8.8"),
             {"93.184.216.34"},
@@ -191,3 +219,52 @@ async def test_transport_wires_ssrf_backend_into_pool(monkeypatch):
 
     assert recording.calls, "SSRFGuardTransport 未接入 SSRFGuardBackend"
     assert recording.calls[0][0] == "93.184.216.34"
+
+
+@pytest.mark.parametrize(
+    ("status", "headers", "content", "message"),
+    [
+        (302, {"Location": "https://blocked.test/private"}, b"", "重定向 URL 校验失败：网址域名不在 URL 导入白名单中，请联系管理员配置"),
+        (302, {}, b"", "网页重定向缺少目标地址"),
+        (200, {"Content-Type": "application/json"}, b"{}", "仅支持导入 HTML 网页，请确认网址指向网页正文"),
+        (200, {"Content-Type": "text/html"}, b"12345", "网页内容超过 4 字节的导入上限"),
+    ],
+)
+async def test_fetch_rejections_keep_public_business_reason(monkeypatch, status, headers, content, message):
+    """重定向及内容限制保留公开原因，不被网络失败兜底覆盖。"""
+    monkeypatch.setattr(
+        url_fetcher, "knowledge_url_import_policy", SimpleNamespace(get=AsyncMock(return_value={"allowed_hosts": ["example.test"]}))
+    )
+    requests = []
+
+    def respond(request):
+        """固定远端协议结果，记录是否越过被拒绝的重定向。"""
+        requests.append(str(request.url))
+        return httpx.Response(status, headers=headers, content=content)
+
+    monkeypatch.setattr(url_fetcher, "SSRFGuardTransport", lambda: httpx.MockTransport(respond))
+    with pytest.raises(InvalidOperationError) as error:
+        await url_fetcher.fetch_url_content("https://example.test/page", max_size=4)
+    assert error.value.code == "url_fetch_rejected" and error.value.message == message
+    assert requests == ["https://example.test/page"]
+
+
+@pytest.mark.parametrize(
+    ("url", "hosts", "allowed"),
+    [
+        ("https://example.com/a", [" EXAMPLE.COM "], True),
+        ("https://docs.example.com/a", ["example.com"], True),
+        ("https://example.com/a", ["*.example.com"], True),
+        ("https://docs.example.com/a", ["*.example.com"], True),
+        ("https://example.com./a", ["example.com."], True),
+        ("https://docs.example.com./a", ["*.example.com."], True),
+        ("https://badexample.com/a", ["example.com"], False),
+        ("https://example.com.attacker.test/a", ["example.com"], False),
+        ("https://arbitrary.test./a", [" "], False),
+        ("file:///etc/passwd", ["example.com"], False),
+        ("https://example.com/a", [], False),
+    ],
+)
+def test_validate_uses_saved_domain_policy(url, hosts, allowed):
+    """列表策略允许域名与子域，同时拒绝相似域名及空白项绕过。"""
+    assert validate_url(url, hosts)[0] is allowed

@@ -46,6 +46,8 @@ export async function mountSessionWorkspace(t, fetchThreadMessages = async () =>
   for (const [name, replacement] of Object.entries(options.runtime || {})) t.mock.method(runtime, name, replacement)
   const { threadApi } = await server.ssrLoadModule('/src/apis/agent_api.js')
   const { agentApi } = await server.ssrLoadModule('/src/apis/agent_api.js')
+  const { mcpApi } = await server.ssrLoadModule('/src/apis/mcp_api.js')
+  t.mock.method(mcpApi, 'getMcpServers', async () => ({ success: true, data: [] }))
   t.mock.method(agentApi, 'getPublicThread', async (id) => ({ id, agent: { id: 'agent' }, yuxi: {} }))
   t.mock.method(threadApi, 'getThreads', async () => ({ data: [], has_more: false }))
   const { useAgentStore } = await server.ssrLoadModule('/src/modules/agents/model/agent.js')
@@ -62,7 +64,7 @@ export async function mountSessionWorkspace(t, fetchThreadMessages = async () =>
   app = renderer.createApp({ ...component, render: () => h('div') }, { isNewSession: true, visible: true, ...options.props })
   app.provide(ssrContextKey, { modules: new Set() })
   app.use(pinia)
-  app.use(createRouter({ history: createMemoryHistory(), routes: [] }))
+  app.use(options.router || createRouter({ history: createMemoryHistory(), routes: [] }))
   app.mount({})
   mounted = true
   const state = toRaw(app._instance.setupState)

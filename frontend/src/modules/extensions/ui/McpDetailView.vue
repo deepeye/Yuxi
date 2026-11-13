@@ -4,12 +4,12 @@
     :tabs="mcpDetailTabs"
     :loading="loading"
     :ready="Boolean(server)"
-    empty-description="未找到 MCP 服务器"
+    empty-description="未找到连接器"
     class="mcp-detail"
   >
     <template #breadcrumb>
-      <nav class="extension-detail-breadcrumb" aria-label="MCP 详情导航">
-        <button type="button" class="extension-detail-back" @click="goBack">MCP</button>
+      <nav class="extension-detail-breadcrumb" aria-label="连接器详情导航">
+        <button type="button" class="extension-detail-back" @click="goBack">连接器</button>
         <ChevronRight :size="15" aria-hidden="true" />
         <span class="extension-detail-current" :title="server?.name || slug">
           {{ server?.name || slug }}
@@ -22,10 +22,10 @@
         <a-space :size="8">
           <a-button
             type="text"
-            :aria-label="testLoading ? '正在测试 MCP' : '测试 MCP'"
+            :aria-label="testLoading ? '正在测试连接器' : '测试连接器'"
             @click="handleTestServer"
             :disabled="testLoading"
-            title="测试 MCP"
+            title="测试连接器"
             class="lucide-icon-btn extension-detail-action"
           >
             <Zap :size="14" v-if="!testLoading" />
@@ -33,10 +33,10 @@
           </a-button>
           <a-button
             type="text"
-            aria-label="编辑 MCP"
+            aria-label="编辑连接器"
             @click="startEdit"
             :disabled="isEditing || !server || server.is_builtin"
-            :title="server?.is_builtin ? '系统内置 MCP 的连接配置由代码管理' : '编辑 MCP'"
+            :title="server?.is_builtin ? '系统内置连接器的连接配置由代码管理' : '编辑连接器'"
             class="lucide-icon-btn extension-detail-action"
           >
             <Pencil :size="14" />
@@ -45,8 +45,8 @@
           <a-button
             type="text"
             :danger="server?.enabled !== false"
-            :aria-label="`${actionLabel} MCP`"
-            :title="`${actionLabel} MCP`"
+            :aria-label="`${actionLabel}连接器`"
+            :title="`${actionLabel}连接器`"
             @click="handleSetServerEnabled(server, server.enabled === false)"
             class="lucide-icon-btn extension-detail-action"
           >
@@ -55,7 +55,7 @@
             <span>{{ actionLabel }}</span>
           </a-button>
           <a-button v-if="server && !server.is_builtin" type="text" danger
-            aria-label="删除 MCP" @click="confirmDeleteServer(server)"
+            aria-label="删除连接器" @click="confirmDeleteServer(server)"
             class="lucide-icon-btn extension-detail-action">
             <Trash2 :size="14" /><span>删除</span>
           </a-button>
@@ -66,13 +66,7 @@
     <template #panel-general>
       <div class="extension-detail-view mcp-general-view">
         <McpFormModal v-model:open="isEditing" :edit-mode="true" :edit-data="server" @submitted="fetchServer" />
-        <section v-if="server.auth_mode === 'oauth'" class="mcp-connection-panel" aria-label="个人授权">
-          <div>
-            <h2>个人授权</h2>
-            <p>智能体将使用你的个人账号访问此服务。</p>
-          </div>
-          <McpConnectionControls :server="server" @changed="fetchServer" />
-        </section>
+        <McpConnectionControls :server="server" @changed="fetchServer" />
 
         <section class="mcp-info-section" aria-label="连接信息">
           <h2>连接信息</h2>
@@ -297,10 +291,10 @@ const fetchServer = async () => {
     if (result.success) {
       server.value = result.data
     } else {
-      message.error(result.message || '获取 MCP 详情失败')
+      message.error(result.message || '获取连接器详情失败')
     }
   } catch (err) {
-    message.error(err.message || '获取 MCP 详情失败')
+    message.error(err.message || '获取连接器详情失败')
   } finally {
     loading.value = false
   }
@@ -375,7 +369,7 @@ const handleSetServerEnabled = async (srv, enabled) => {
   try {
     const result = await mcpApi.updateMcpServerStatus(srv.slug, enabled)
     if (result.success) {
-      message.success(result.message || `MCP 已${enabled ? '启用' : '停用'}`)
+      message.success(`连接器已${enabled ? '启用' : '停用'}`)
       await fetchServer()
     } else {
       message.error(result.message || '操作失败')
@@ -387,8 +381,8 @@ const handleSetServerEnabled = async (srv, enabled) => {
 
 const confirmDeleteServer = (srv) => {
   Modal.confirm({
-    title: '确认删除 MCP',
-    content: `确定要删除 MCP "${srv.name}" 吗？此操作不可撤销。`,
+    title: '确认删除连接器',
+    content: `确定要删除连接器 "${srv.name}" 吗？此操作不可撤销。`,
     okText: '删除',
     okType: 'danger',
     cancelText: '取消',
@@ -396,7 +390,7 @@ const confirmDeleteServer = (srv) => {
       try {
         const result = await mcpApi.deleteMcpServer(srv.slug)
         if (result.success) {
-          message.success('MCP 删除成功')
+          message.success('连接器删除成功')
           router.push({ path: '/extensions', query: { tab: 'mcp' } })
         } else {
           message.error(result.message || '删除失败')
@@ -438,20 +432,6 @@ onMounted(() => {
   dt { color: var(--gray-500); font-size: 12px; }
   dd { min-width: 0; margin: 0; color: var(--gray-800); font-size: 13px; line-height: 22px; overflow-wrap: anywhere; }
   code { font-size: 12px; }
-}
-
-.mcp-connection-panel {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 16px;
-  padding: 16px 20px;
-  border: 1px solid var(--gray-150);
-  border-radius: 10px;
-  background: var(--gray-25);
-
-  p { margin: 4px 0 0; color: var(--gray-500); font-size: 12px; line-height: 20px; }
 }
 
 .mcp-info-section h2 { margin-bottom: 14px; }
